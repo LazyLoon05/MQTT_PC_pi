@@ -26,7 +26,7 @@ QString CommandTracker::send(const QString &node, const QString &command, const 
         return id;
     }
 
-    QJsonObject obj{{"request_id", id}, {"command", command}, {"ts_ms", Protocol::nowMs()}};
+    QJsonObject obj{{"request_id", id}, {"command", command}, {"ts_ms", Protocol::jsonNumber(Protocol::nowMs())}};
     if (!value.isNull()) obj["value"] = value;
 
     Pending p;

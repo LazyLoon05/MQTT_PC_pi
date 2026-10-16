@@ -10,6 +10,10 @@ namespace Protocol {
 
 inline qint64 nowMs() { return QDateTime::currentMSecsSinceEpoch(); }
 
+// Qt 5 không có QJsonValue(qint64). Giá trị timestamp/sequence dùng ở đây
+// nhỏ hơn 2^53 nên chuyển sang số JSON double vẫn chính xác.
+inline QJsonValue jsonNumber(qint64 value) { return QJsonValue(static_cast<double>(value)); }
+
 inline QByteArray toJson(const QJsonObject &o)
 {
     return QJsonDocument(o).toJson(QJsonDocument::Compact);

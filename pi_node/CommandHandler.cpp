@@ -7,7 +7,7 @@ CommandHandler::Result CommandHandler::handle(const QString &command, const QByt
     const bool parsed = payload.size() <= 4096 && Protocol::parseObject(payload, request);
     const QString id = request.value("request_id").toString();
     QJsonObject reply{{"request_id", id}, {"command", command},
-                      {"status", "error"}, {"ts_ms", Protocol::nowMs()}};
+                      {"status", "error"}, {"ts_ms", Protocol::jsonNumber(Protocol::nowMs())}};
     auto error = [&](const QString &message) {
         reply["error"] = message;
         return Result{Protocol::toJson(reply), 0, false};

@@ -169,7 +169,8 @@ private slots:
     }
     void aclRejectsPcTelemetry()
     {
-        m_node.terminate(); QVERIFY(m_node.waitForFinished(2000));
+        m_node.terminate();
+        QTRY_VERIFY_WITH_TIMEOUT(m_node.state() == QProcess::NotRunning, 5000);
         QTRY_COMPARE(latest("lab/pi/status"), QByteArray("offline"));
         QVERIFY(m_pc->publish("lab/pi/sensor/forbidden", "should-not-arrive", 1));
         QTest::qWait(400);
@@ -180,20 +181,23 @@ private slots:
     }
     void gracefulShutdown()
     {
-        m_node.terminate(); QVERIFY(m_node.waitForFinished(2000));
+        m_node.terminate();
+        QTRY_VERIFY_WITH_TIMEOUT(m_node.state() == QProcess::NotRunning, 5000);
         QTRY_COMPARE_WITH_TIMEOUT(latest("lab/pi/status"), QByteArray("offline"), 2000);
         QTRY_COMPARE(m_controller->nodeState(), "offline");
         QCOMPARE(m_node.exitCode(), 0);
     }
     void suddenDeathLastWill()
     {
-        m_node.kill(); QVERIFY(m_node.waitForFinished(2000));
+        m_node.kill();
+        QTRY_VERIFY_WITH_TIMEOUT(m_node.state() == QProcess::NotRunning, 5000);
         QTRY_COMPARE_WITH_TIMEOUT(latest("lab/pi/status"), QByteArray("offline"), 25000);
         QTRY_COMPARE(m_controller->nodeState(), "offline");
     }
     void offlineCommandRetriesThenTimesOut()
     {
-        m_node.terminate(); QVERIFY(m_node.waitForFinished(2000));
+        m_node.terminate();
+        QTRY_VERIFY_WITH_TIMEOUT(m_node.state() == QProcess::NotRunning, 5000);
         QSignalSpy finished(m_tracker.get(), &CommandTracker::finished);
         m_messages.clear();
         m_tracker->send("pi", "ping");
@@ -208,7 +212,11 @@ private slots:
     void brokerRestartReconnectsAndResubscribes()
     {
         QSignalSpy states(m_pc.get(), &MqttService::stateChanged);
-        m_broker.terminate(); QVERIFY(m_broker.waitForFinished(2000));
+        m_broker.terminate();
+        // Mosquitto 1.6.9/Focal cần khoảng 10 s để kết thúc cleanup trong
+        // container kiểm thử, kể cả không có client. Chờ có giới hạn và vẫn
+        // xử lý event loop của PC trong khi dịch vụ dừng.
+        QTRY_VERIFY_WITH_TIMEOUT(m_broker.state() == QProcess::NotRunning, 15000);
         QTRY_VERIFY(!m_pc->isConnected());
         QTRY_COMPARE(m_controller->nodeState(), "unknown");
         QSignalSpy finished(m_tracker.get(), &CommandTracker::finished);
@@ -233,7 +241,8 @@ private slots:
     }
     void wrongAckIsIgnored()
     {
-        m_node.terminate(); QVERIFY(m_node.waitForFinished(2000));
+        m_node.terminate();
+        QTRY_VERIFY_WITH_TIMEOUT(m_node.state() == QProcess::NotRunning, 5000);
         MqttService fakePi(m_piCfg);
         fakePi.start(); QTRY_VERIFY(fakePi.isConnected());
         QSignalSpy finished(m_tracker.get(), &CommandTracker::finished);
@@ -252,7 +261,8 @@ private slots:
     }
     void invalidDataDoesNotRefreshHeartbeat()
     {
-        m_node.terminate(); QVERIFY(m_node.waitForFinished(2000));
+        m_node.terminate();
+        QTRY_VERIFY_WITH_TIMEOUT(m_node.state() == QProcess::NotRunning, 5000);
         QTRY_COMPARE(m_controller->nodeState(), "offline");
         MqttService fakePi(m_piCfg); fakePi.start(); QTRY_VERIFY(fakePi.isConnected());
         // Reset PC để không còn heartbeat cũ.

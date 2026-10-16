@@ -115,7 +115,7 @@ private slots:
     }
     void heartbeatValidation()
     {
-        QJsonObject hb{{"seq", 1}, {"ts_ms", Protocol::nowMs()}, {"uptime_s", 0}, {"interval_ms", 2000}};
+        QJsonObject hb{{"seq", 1}, {"ts_ms", Protocol::jsonNumber(Protocol::nowMs())}, {"uptime_s", 0}, {"interval_ms", 2000}};
         QVERIFY(Protocol::isHeartbeat(hb));
         hb["seq"] = -1;
         QVERIFY(!Protocol::isHeartbeat(hb));

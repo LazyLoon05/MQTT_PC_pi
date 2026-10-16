@@ -15,7 +15,8 @@ for dest in /etc/mosquitto/conf.d/mqtt-pc-pi.conf /etc/mosquitto/mqtt-pc-pi.acl 
     /etc/mosquitto/mqtt-pc-pi.passwd /etc/mqtt_qt/pi_node.pass /etc/systemd/system/pi-node.service; do
     [[ ! -e $dest ]] || { echo "Đã có $dest; xem README để cập nhật thủ công." >&2; exit 1; }
 done
-getent passwd mqtt-node >/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin mqtt-node
+getent group mqtt-node >/dev/null || groupadd --system mqtt-node
+getent passwd mqtt-node >/dev/null || useradd --system --gid mqtt-node --no-create-home --shell /usr/sbin/nologin mqtt-node
 install -d -m 750 -o root -g mqtt-node /etc/mqtt_qt
 install -m 755 "$binary" /usr/local/bin/pi_node
 # Nếu Qt MQTT dùng prefix riêng, lưu đường dẫn thư viện để systemd cũng tìm thấy.

@@ -56,3 +56,5 @@ private:
     int m_attempt = 0;
     bool m_wantRun = false;
 };
+
+Q_DECLARE_METATYPE(MqttService::State)

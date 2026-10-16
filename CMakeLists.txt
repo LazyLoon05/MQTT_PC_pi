@@ -1,14 +1,27 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.16)
 project(mqtt_qt LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Core)
+set(MQTT_QT_MAJOR "5" CACHE STRING "Qt major version (5 or 6)")
+set_property(CACHE MQTT_QT_MAJOR PROPERTY STRINGS 5 6)
+if(NOT MQTT_QT_MAJOR MATCHES "^[56]$")
+    message(FATAL_ERROR "MQTT_QT_MAJOR must be 5 or 6")
+endif()
+set(QT_PACKAGE "Qt${MQTT_QT_MAJOR}")
+if(MQTT_QT_MAJOR STREQUAL "5")
+    find_package(Qt5 5.12 REQUIRED COMPONENTS Core)
+else()
+    find_package(Qt6 REQUIRED COMPONENTS Core)
+endif()
 # Qt MQTT có thể được cài ở prefix riêng so với Qt hệ thống.
-find_package(Qt6Mqtt REQUIRED)
+find_package(${QT_PACKAGE}Mqtt REQUIRED)
 add_subdirectory(core)
 
 # Pi:  cmake -S . -B build -G Ninja -DBUILD_PC_GUI=OFF
@@ -28,16 +41,17 @@ if(BUILD_PI_NODE)
 endif()
 
 if(BUILD_PC_GUI)
-    find_package(Qt6 6.5 REQUIRED COMPONENTS Quick)
-    qt_add_executable(pc_gui
-        pc_gui/main.cpp pc_gui/NodeController.cpp pc_gui/NodeController.h)
-    qt_add_qml_module(pc_gui URI MqttGui VERSION 1.0 QML_FILES pc_gui/Main.qml)
-    target_link_libraries(pc_gui PRIVATE core Qt6::Quick)
+    find_package(${QT_PACKAGE} REQUIRED COMPONENTS Quick QuickControls2)
+    set(CMAKE_AUTORCC ON)
+    add_executable(pc_gui
+        pc_gui/main.cpp pc_gui/NodeController.cpp pc_gui/NodeController.h
+        pc_gui/pc_gui.qrc)
+    target_link_libraries(pc_gui PRIVATE core ${QT_PACKAGE}::Quick ${QT_PACKAGE}::QuickControls2)
     install(TARGETS pc_gui RUNTIME DESTINATION bin)
 endif()
 
 include(CTest)
 if(BUILD_TESTING)
-    find_package(Qt6 REQUIRED COMPONENTS Test)
+    find_package(${QT_PACKAGE} REQUIRED COMPONENTS Test)
     add_subdirectory(tests)
 endif()

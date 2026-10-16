@@ -5,8 +5,20 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-latest
-    container: debian:trixie
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:20.04
+            qt: '5'
+            qmake: qmake
+          - image: debian:trixie
+            qt: '6'
+            qmake: qmake6
+    container: ${{ matrix.image }}
     timeout-minutes: 20
+    env:
+      MQTT_QT_MAJOR: ${{ matrix.qt }}
     steps:
       - name: Bootstrap checkout tools
         run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
@@ -16,12 +28,16 @@ jobs:
       - name: Qt and Mosquitto
         run: ./scripts/install-deps-debian.sh --gui
       - name: Build both applications
+        shell: bash
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$HOME/.local/qt-mqtt/$(qmake6 -query QT_VERSION)"
+          qt_version=$(${{ matrix.qmake }} -query QT_VERSION)
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMQTT_QT_MAJOR="$MQTT_QT_MAJOR" -DCMAKE_PREFIX_PATH="$HOME/.local/qt-mqtt/$qt_version"
           cmake --build build --parallel 2
       - name: Functional tests
-        run: ctest --test-dir build --output-on-failure
+        run: cd build && ctest --output-on-failure
       - name: Headless Pi build
+        shell: bash
         run: |
-          cmake -S . -B build-pi -G Ninja -DBUILD_PC_GUI=OFF -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH="$HOME/.local/qt-mqtt/$(qmake6 -query QT_VERSION)"
+          qt_version=$(${{ matrix.qmake }} -query QT_VERSION)
+          cmake -S . -B build-pi -G Ninja -DBUILD_PC_GUI=OFF -DBUILD_TESTING=OFF -DMQTT_QT_MAJOR="$MQTT_QT_MAJOR" -DCMAKE_PREFIX_PATH="$HOME/.local/qt-mqtt/$qt_version"
           cmake --build build-pi --parallel 2

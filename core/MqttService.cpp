@@ -5,6 +5,7 @@
 MqttService::MqttService(const Config &cfg, QObject *parent)
     : QObject(parent), m_cfg(cfg)
 {
+    qRegisterMetaType<MqttService::State>("MqttService::State");
     m_client.setHostname(cfg.host);
     m_client.setPort(cfg.port);
     if (!cfg.user.isEmpty()) m_client.setUsername(cfg.user);

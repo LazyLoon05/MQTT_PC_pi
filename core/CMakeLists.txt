@@ -4,4 +4,4 @@ add_library(core STATIC
     CommandTracker.h CommandTracker.cpp)
 
 target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(core PUBLIC Qt6::Core Qt6::Mqtt)
+target_link_libraries(core PUBLIC ${QT_PACKAGE}::Core ${QT_PACKAGE}::Mqtt)

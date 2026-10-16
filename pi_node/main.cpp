@@ -87,8 +87,8 @@ int main(int argc, char *argv[])
     QObject::connect(&sensorTimer, &QTimer::timeout, [&] {
         if (!mqtt.isConnected()) return;
         const TempReading t = readCpuTemp();
-        QJsonObject o{{"seq", ++sensorSeq},
-                      {"ts_ms", Protocol::nowMs()},
+        QJsonObject o{{"seq", Protocol::jsonNumber(++sensorSeq)},
+                      {"ts_ms", Protocol::jsonNumber(Protocol::nowMs())},
                       {"value", t.valid ? QJsonValue(qRound(t.celsius * 10) / 10.0)
                                         : QJsonValue(QJsonValue::Null)},
                       {"valid", t.valid}};
@@ -100,9 +100,9 @@ int main(int argc, char *argv[])
     // --- Heartbeat ---
     auto sendHeartbeat = [&] {
         if (!mqtt.isConnected()) return;
-        QJsonObject o{{"seq", ++hbSeq},
-                      {"ts_ms", Protocol::nowMs()},
-                      {"uptime_s", uptime.elapsed() / 1000},
+        QJsonObject o{{"seq", Protocol::jsonNumber(++hbSeq)},
+                      {"ts_ms", Protocol::jsonNumber(Protocol::nowMs())},
+                      {"uptime_s", Protocol::jsonNumber(uptime.elapsed() / 1000)},
                       {"interval_ms", sensorTimer.interval()}};
         mqtt.publish(cfg.nodeTopic(cfg.nodeId, "heartbeat"), Protocol::toJson(o), 0);
     };
