@@ -1,0 +1,11 @@
+user pi_user
+topic read  lab/pi/cmd/#
+topic write lab/pi/status
+topic write lab/pi/heartbeat
+topic write lab/pi/sensor/#
+topic write lab/pi/reply/#
+
+user pc_user
+topic read  lab/pi/#
+topic write lab/pi/cmd/#
+topic write lab/pc/status

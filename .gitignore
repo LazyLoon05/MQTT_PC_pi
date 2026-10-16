@@ -1,0 +1,10 @@
+/build*/
+/.dev/
+CMakeUserPresets.json
+*.user
+*.pass
+*.passwd
+.env
+.env.*
+!.env.example
+__pycache__/

@@ -1,0 +1,27 @@
+name: Build and MQTT tests
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 20
+    steps:
+      - name: Bootstrap checkout tools
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Qt and Mosquitto
+        run: ./scripts/install-deps-debian.sh --gui
+      - name: Build both applications
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$HOME/.local/qt-mqtt/$(qmake6 -query QT_VERSION)"
+          cmake --build build --parallel 2
+      - name: Functional tests
+        run: ctest --test-dir build --output-on-failure
+      - name: Headless Pi build
+        run: |
+          cmake -S . -B build-pi -G Ninja -DBUILD_PC_GUI=OFF -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH="$HOME/.local/qt-mqtt/$(qmake6 -query QT_VERSION)"
+          cmake --build build-pi --parallel 2
