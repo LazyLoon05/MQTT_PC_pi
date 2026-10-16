@@ -12,6 +12,12 @@ $version = (& $qmake -query QT_VERSION).Trim()
 if ($LASTEXITCODE -ne 0 -or $version -ne '5.14.2') { throw "Can Qt kit 5.14.2, hien tai: $version" }
 Get-Command git -ErrorAction Stop | Out-Null
 Get-Command $MakeTool -ErrorAction Stop | Out-Null
+$perl = Get-Command perl -CommandType Application -ErrorAction SilentlyContinue
+if (-not $perl) {
+    throw 'Can Perl de chay Qt syncqt.pl. Cai Strawberry Perl 64-bit tu https://strawberryperl.com/, them Perl vao PATH va mo lai terminal MSVC.'
+}
+& $perl.Source -e 'exit 0'
+if ($LASTEXITCODE -ne 0) { throw 'Perl khong chay duoc. Kiem tra cai dat Strawberry Perl va PATH bang perl -v.' }
 $sourceDir = Join-Path $CacheDir "qtmqtt-$version"
 $buildDir = Join-Path $sourceDir 'build'
 if (-not (Test-Path $sourceDir)) {

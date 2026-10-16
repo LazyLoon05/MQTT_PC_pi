@@ -67,6 +67,17 @@ sudo systemctl start pi-node
 
 Giữ Qt **5.14.2** hiện có. Trong Qt Creator → Kits, xem compiler của kit: ví dụ **MinGW 7.3 64-bit** hoặc **MSVC**. Thư viện Qt MQTT cần build bằng đúng compiler/kiến trúc đó. Mở terminal của kit (MSVC cần terminal Developer Command Prompt / Developer PowerShell với môi trường compiler đã nạp), rồi mở PowerShell trong môi trường ấy.
 
+Trước khi build Qt MQTT, cài **[Strawberry Perl 64-bit](https://strawberryperl.com/)** (bản Windows MSI, thư mục mặc định `C:\Strawberry`). Qt dùng Perl chạy `syncqt.pl` để tạo các header của module. Kiểm tra `perl -v` phải chạy được. Script Windows kiểm tra Perl trước khi bắt đầu build.
+
+Nếu đang dùng CMD/MSVC và vừa cài Perl, có thể bổ sung PATH cho chính cửa sổ hiện tại:
+
+```bat
+set "PATH=%PATH%;C:\Strawberry\perl\bin;C:\Strawberry\c\bin"
+perl -v
+```
+
+Các đường dẫn Perl được thêm cuối PATH để giữ compiler/linker MSVC đang dùng. Nếu đã build dở và gặp `'perl' is not recognized`, giữ nguyên mã nguồn và thư mục build; sau khi `perl -v` chạy được, chạy lại qmake, `nmake`, rồi `nmake install`. Không cần clone hoặc xóa thư mục build.
+
 ```powershell
 git clone https://github.com/LazyLoon05/MQTT_PC_pi.git
 cd MQTT_PC_pi
@@ -78,7 +89,7 @@ $qtKit = 'C:\Qt\5.14.2\mingw73_64'
 
 Với MSVC, thay `$qtKit` bằng kit MSVC 5.14.2 và `-MakeTool nmake`. Nếu `mingw32-make` không có trong PATH, thêm thư mục `bin` của compiler MinGW đi kèm Qt kit (không lấy MinGW từ bộ khác).
 
-Script clone Qt MQTT tag **v5.14.2**, build Debug + Release bằng qmake, rồi cài module vào kit Qt. Cần Git, compiler và quyền ghi vào thư mục kit. Không đặt mật khẩu MQTT trong script. Nếu module đã được cài đúng từ trước, có thể bỏ qua bước này.
+Script clone Qt MQTT tag **v5.14.2**, build Debug + Release bằng qmake, rồi cài module vào kit Qt. Cần Git, Perl, compiler và quyền ghi vào thư mục kit. Không đặt mật khẩu MQTT trong script. Nếu module đã được cài đúng từ trước, có thể bỏ qua bước này.
 
 Kiểm tra:
 
