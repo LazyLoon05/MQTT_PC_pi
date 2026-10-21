@@ -1,0 +1,54 @@
+# Generated build artifacts
+*~
+*.autosave
+*.a
+*.core
+*.moc
+*.o
+*.obj
+*.orig
+*.rej
+*.so
+*.so.*
+*.qm
+tags
+.DS_Store
+*.debug
+Makefile*
+*.prl
+*.app
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+*.res
+*.rc
+*.stash
+.qmake.stash
+
+# Qt Creator
+*.pro.user*
+.qtcreator/
+*/.qtcreator/
+
+# Visual Studio
+*.ib_pdb_index
+*.idb
+*.ilk
+*.pdb
+*.sln
+*.suo
+
+# Build & Output folders
+*.dll
+*.exe
+debug/
+release/
+build/
+*/debug/
+*/release/
+*/build/
+.moc/
+.obj/
+.pch/
+.rcc/
+.uic/

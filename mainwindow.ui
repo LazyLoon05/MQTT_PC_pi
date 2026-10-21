@@ -1,0 +1,303 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>601</width>
+    <height>376</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>MainWindow</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <widget class="QPushButton" name="PingButton">
+    <property name="geometry">
+     <rect>
+      <x>480</x>
+      <y>20</y>
+      <width>80</width>
+      <height>24</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Ping</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="SendButton">
+    <property name="geometry">
+     <rect>
+      <x>480</x>
+      <y>60</y>
+      <width>80</width>
+      <height>24</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Send</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="ConnectButton">
+    <property name="geometry">
+     <rect>
+      <x>480</x>
+      <y>220</y>
+      <width>80</width>
+      <height>24</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Connect</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="CancelButton">
+    <property name="geometry">
+     <rect>
+      <x>480</x>
+      <y>100</y>
+      <width>80</width>
+      <height>24</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Cancel</string>
+    </property>
+   </widget>
+   <widget class="QLineEdit" name="IpEdit">
+    <property name="geometry">
+     <rect>
+      <x>20</x>
+      <y>30</y>
+      <width>113</width>
+      <height>24</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>192.168.0.104</string>
+    </property>
+    <property name="alignment">
+     <set>Qt::AlignCenter</set>
+    </property>
+   </widget>
+   <widget class="QPlainTextEdit" name="RecvEdit">
+    <property name="geometry">
+     <rect>
+      <x>20</x>
+      <y>200</y>
+      <width>231</width>
+      <height>131</height>
+     </rect>
+    </property>
+   </widget>
+   <widget class="QLabel" name="label">
+    <property name="geometry">
+     <rect>
+      <x>20</x>
+      <y>180</y>
+      <width>49</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Recv</string>
+    </property>
+   </widget>
+   <widget class="QLineEdit" name="UserNameEdit">
+    <property name="geometry">
+     <rect>
+      <x>20</x>
+      <y>120</y>
+      <width>113</width>
+      <height>24</height>
+     </rect>
+    </property>
+   </widget>
+   <widget class="QLabel" name="label_2">
+    <property name="geometry">
+     <rect>
+      <x>280</x>
+      <y>90</y>
+      <width>49</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Topic: </string>
+    </property>
+   </widget>
+   <widget class="QLineEdit" name="PortEdit">
+    <property name="geometry">
+     <rect>
+      <x>160</x>
+      <y>30</y>
+      <width>113</width>
+      <height>24</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>1883</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="label_3">
+    <property name="geometry">
+     <rect>
+      <x>160</x>
+      <y>10</y>
+      <width>49</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Port:</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="label_4">
+    <property name="geometry">
+     <rect>
+      <x>20</x>
+      <y>10</y>
+      <width>51</width>
+      <height>20</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>IP:</string>
+    </property>
+   </widget>
+   <widget class="QPlainTextEdit" name="SendEdit">
+    <property name="geometry">
+     <rect>
+      <x>270</x>
+      <y>200</y>
+      <width>191</width>
+      <height>131</height>
+     </rect>
+    </property>
+   </widget>
+   <widget class="QLabel" name="label_5">
+    <property name="geometry">
+     <rect>
+      <x>270</x>
+      <y>180</y>
+      <width>49</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Send</string>
+    </property>
+   </widget>
+   <widget class="QComboBox" name="Encryption">
+    <property name="geometry">
+     <rect>
+      <x>300</x>
+      <y>30</y>
+      <width>111</width>
+      <height>24</height>
+     </rect>
+    </property>
+    <item>
+     <property name="text">
+      <string>No Encryption</string>
+     </property>
+    </item>
+    <item>
+     <property name="text">
+      <string>Encryption</string>
+     </property>
+    </item>
+   </widget>
+   <widget class="QLineEdit" name="PassEdit">
+    <property name="geometry">
+     <rect>
+      <x>150</x>
+      <y>120</y>
+      <width>113</width>
+      <height>24</height>
+     </rect>
+    </property>
+   </widget>
+   <widget class="QLabel" name="label_6">
+    <property name="geometry">
+     <rect>
+      <x>20</x>
+      <y>90</y>
+      <width>71</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>User name:</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="label_7">
+    <property name="geometry">
+     <rect>
+      <x>150</x>
+      <y>90</y>
+      <width>71</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Password:</string>
+    </property>
+   </widget>
+   <widget class="QLineEdit" name="TopicEdit">
+    <property name="geometry">
+     <rect>
+      <x>280</x>
+      <y>120</y>
+      <width>113</width>
+      <height>24</height>
+     </rect>
+    </property>
+   </widget>
+   <widget class="QPlainTextEdit" name="StatusEdit">
+    <property name="geometry">
+     <rect>
+      <x>470</x>
+      <y>290</y>
+      <width>104</width>
+      <height>31</height>
+     </rect>
+    </property>
+   </widget>
+   <widget class="QLabel" name="label_8">
+    <property name="geometry">
+     <rect>
+      <x>500</x>
+      <y>270</y>
+      <width>49</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Status</string>
+    </property>
+   </widget>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>601</width>
+     <height>21</height>
+    </rect>
+   </property>
+   <widget class="QMenu" name="menuMQTT">
+    <property name="title">
+     <string>MQTT</string>
+    </property>
+   </widget>
+   <addaction name="menuMQTT"/>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
