@@ -10,10 +10,12 @@ int main(int argc, char *argv[])
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Qt MQTT Console Client for Orange Pi / Linux"));
-    parser.addHelpOption();
+    QCommandLineOption helpOption(QStringList() << QStringLiteral("help") << QStringLiteral("?"),
+                                  QStringLiteral("Displays this help."));
+    parser.addOption(helpOption);
     parser.addVersionOption();
 
-    QCommandLineOption hostOption(QStringList() << QStringLiteral("h") << QStringLiteral("host"),
+    QCommandLineOption hostOption(QStringList() << QStringLiteral("h") << QStringLiteral("host") << QStringLiteral("b") << QStringLiteral("broker"),
                                   QStringLiteral("MQTT broker hostname or IP."),
                                   QStringLiteral("host"),
                                   QStringLiteral("192.168.0.104"));
@@ -54,6 +56,11 @@ int main(int argc, char *argv[])
     parser.addOption(heartbeatOption);
 
     parser.process(a);
+
+    if (parser.isSet(helpOption)) {
+        parser.showHelp();
+        return 0;
+    }
 
     MqttConsoleClient::Config config;
     config.host = parser.value(hostOption);
