@@ -220,7 +220,7 @@ void MqttConsoleClient::onConsoleInput(const QString &rawLine)
     }
 
     if (line.startsWith(QLatin1Char(':'))) {
-        QStringList parts = line.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        QStringList parts = line.split(QLatin1Char(' '), QString::SkipEmptyParts);
         QString cmd = parts.value(0).toLower();
 
         if (cmd == QStringLiteral(":help")) {
