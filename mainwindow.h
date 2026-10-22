@@ -30,6 +30,8 @@ private slots:
     void on_PingButton_clicked();
     void on_SubButton_clicked();
     void on_UnsubButton_clicked();
+    void on_ClearRecvButton_clicked();
+    void on_ClearLogButton_clicked();
     void on_Encryption_currentIndexChanged(int index);
 
     // MQTT Client Slots
@@ -46,9 +48,9 @@ private slots:
 
 private:
     void updateUiState();
-    void subscribeTopic(const QString &topic);
+    void subscribeTopic(const QString &topic, quint8 qos = 0);
     void unsubscribeTopic(const QString &topic);
-    void logMessage(const QString &text);
+    void logSystem(const QString &text);
 
     Ui::MainWindow *ui;
     QMqttClient *m_client;

@@ -6,20 +6,21 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>680</width>
-    <height>430</height>
+    <width>780</width>
+    <height>560</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>Qt MQTT Client - PC</string>
   </property>
   <widget class="QWidget" name="centralwidget">
+   <!-- Row 1: Connection Config -->
    <widget class="QLabel" name="label_4">
     <property name="geometry">
      <rect>
       <x>20</x>
       <y>10</y>
-      <width>50</width>
+      <width>60</width>
       <height>16</height>
      </rect>
     </property>
@@ -32,7 +33,7 @@
      <rect>
       <x>20</x>
       <y>30</y>
-      <width>110</width>
+      <width>120</width>
       <height>24</height>
      </rect>
     </property>
@@ -46,7 +47,7 @@
    <widget class="QLabel" name="label_3">
     <property name="geometry">
      <rect>
-      <x>140</x>
+      <x>150</x>
       <y>10</y>
       <width>40</width>
       <height>16</height>
@@ -59,7 +60,7 @@
    <widget class="QLineEdit" name="PortEdit">
     <property name="geometry">
      <rect>
-      <x>140</x>
+      <x>150</x>
       <y>30</y>
       <width>65</width>
       <height>24</height>
@@ -75,7 +76,7 @@
    <widget class="QLabel" name="label_enc">
     <property name="geometry">
      <rect>
-      <x>215</x>
+      <x>225</x>
       <y>10</y>
       <width>80</width>
       <height>16</height>
@@ -88,9 +89,9 @@
    <widget class="QComboBox" name="Encryption">
     <property name="geometry">
      <rect>
-      <x>215</x>
+      <x>225</x>
       <y>30</y>
-      <width>115</width>
+      <width>125</width>
       <height>24</height>
      </rect>
     </property>
@@ -108,7 +109,7 @@
    <widget class="QPushButton" name="PingButton">
     <property name="geometry">
      <rect>
-      <x>340</x>
+      <x>360</x>
       <y>30</y>
       <width>75</width>
       <height>24</height>
@@ -121,9 +122,9 @@
    <widget class="QPushButton" name="ConnectButton">
     <property name="geometry">
      <rect>
-      <x>485</x>
+      <x>570</x>
       <y>30</y>
-      <width>85</width>
+      <width>90</width>
       <height>24</height>
      </rect>
     </property>
@@ -134,9 +135,9 @@
    <widget class="QPushButton" name="CancelButton">
     <property name="geometry">
      <rect>
-      <x>575</x>
+      <x>670</x>
       <y>30</y>
-      <width>85</width>
+      <width>90</width>
       <height>24</height>
      </rect>
     </property>
@@ -144,6 +145,8 @@
      <string>Disconnect</string>
     </property>
    </widget>
+
+   <!-- Row 2: Auth and Subscription -->
    <widget class="QLabel" name="label_6">
     <property name="geometry">
      <rect>
@@ -162,7 +165,7 @@
      <rect>
       <x>20</x>
       <y>85</y>
-      <width>110</width>
+      <width>120</width>
       <height>24</height>
      </rect>
     </property>
@@ -170,7 +173,7 @@
    <widget class="QLabel" name="label_7">
     <property name="geometry">
      <rect>
-      <x>140</x>
+      <x>150</x>
       <y>65</y>
       <width>70</width>
       <height>16</height>
@@ -183,9 +186,9 @@
    <widget class="QLineEdit" name="PassEdit">
     <property name="geometry">
      <rect>
-      <x>140</x>
+      <x>150</x>
       <y>85</y>
-      <width>110</width>
+      <width>120</width>
       <height>24</height>
      </rect>
     </property>
@@ -193,9 +196,9 @@
    <widget class="QLabel" name="label_sub">
     <property name="geometry">
      <rect>
-      <x>265</x>
+      <x>285</x>
       <y>65</y>
-      <width>100</width>
+      <width>110</width>
       <height>16</height>
      </rect>
     </property>
@@ -206,9 +209,9 @@
    <widget class="QLineEdit" name="SubTopicEdit">
     <property name="geometry">
      <rect>
-      <x>265</x>
+      <x>285</x>
       <y>85</y>
-      <width>140</width>
+      <width>160</width>
       <height>24</height>
      </rect>
     </property>
@@ -216,10 +219,48 @@
      <string>orangepi/data</string>
     </property>
    </widget>
+   <widget class="QLabel" name="label_sub_qos">
+    <property name="geometry">
+     <rect>
+      <x>455</x>
+      <y>65</y>
+      <width>55</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Sub QoS:</string>
+    </property>
+   </widget>
+   <widget class="QComboBox" name="SubQosCombo">
+    <property name="geometry">
+     <rect>
+      <x>455</x>
+      <y>85</y>
+      <width>75</width>
+      <height>24</height>
+     </rect>
+    </property>
+    <item>
+     <property name="text">
+      <string>QoS 0</string>
+     </property>
+    </item>
+    <item>
+     <property name="text">
+      <string>QoS 1</string>
+     </property>
+    </item>
+    <item>
+     <property name="text">
+      <string>QoS 2</string>
+     </property>
+    </item>
+   </widget>
    <widget class="QPushButton" name="SubButton">
     <property name="geometry">
      <rect>
-      <x>415</x>
+      <x>540</x>
       <y>85</y>
       <width>65</width>
       <height>24</height>
@@ -232,7 +273,7 @@
    <widget class="QPushButton" name="UnsubButton">
     <property name="geometry">
      <rect>
-      <x>485</x>
+      <x>615</x>
       <y>85</y>
       <width>65</width>
       <height>24</height>
@@ -242,12 +283,14 @@
      <string>Unsub</string>
     </property>
    </widget>
+
+   <!-- Row 3: Publish Configuration -->
    <widget class="QLabel" name="label_pub">
     <property name="geometry">
      <rect>
-      <x>265</x>
+      <x>20</x>
       <y>120</y>
-      <width>100</width>
+      <width>110</width>
       <height>16</height>
      </rect>
     </property>
@@ -258,9 +301,9 @@
    <widget class="QLineEdit" name="PubTopicEdit">
     <property name="geometry">
      <rect>
-      <x>265</x>
+      <x>20</x>
       <y>140</y>
-      <width>140</width>
+      <width>250</width>
       <height>24</height>
      </rect>
     </property>
@@ -268,12 +311,63 @@
      <string>orangepi/cmd</string>
     </property>
    </widget>
+   <widget class="QLabel" name="label_pub_qos">
+    <property name="geometry">
+     <rect>
+      <x>285</x>
+      <y>120</y>
+      <width>55</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Pub QoS:</string>
+    </property>
+   </widget>
+   <widget class="QComboBox" name="PubQosCombo">
+    <property name="geometry">
+     <rect>
+      <x>285</x>
+      <y>140</y>
+      <width>75</width>
+      <height>24</height>
+     </rect>
+    </property>
+    <item>
+     <property name="text">
+      <string>QoS 0</string>
+     </property>
+    </item>
+    <item>
+     <property name="text">
+      <string>QoS 1</string>
+     </property>
+    </item>
+    <item>
+     <property name="text">
+      <string>QoS 2</string>
+     </property>
+    </item>
+   </widget>
+   <widget class="QCheckBox" name="RetainCheck">
+    <property name="geometry">
+     <rect>
+      <x>375</x>
+      <y>140</y>
+      <width>75</width>
+      <height>24</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Retain</string>
+    </property>
+   </widget>
    <widget class="QPushButton" name="SendButton">
     <property name="geometry">
      <rect>
-      <x>415</x>
+      <x>455</x>
       <y>140</y>
-      <width>80</width>
+      <width>85</width>
       <height>24</height>
      </rect>
     </property>
@@ -281,7 +375,9 @@
      <string>Publish</string>
     </property>
    </widget>
-   <widget class="QLabel" name="label">
+
+   <!-- Row 4: Messages Received vs Send Payload -->
+   <widget class="QLabel" name="label_recv">
     <property name="geometry">
      <rect>
       <x>20</x>
@@ -291,7 +387,20 @@
      </rect>
     </property>
     <property name="text">
-     <string>Recv (Received Data):</string>
+     <string>Received Messages (Data):</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="ClearRecvButton">
+    <property name="geometry">
+     <rect>
+      <x>290</x>
+      <y>172</y>
+      <width>80</width>
+      <height>22</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Clear Data</string>
     </property>
    </widget>
    <widget class="QPlainTextEdit" name="RecvEdit">
@@ -299,39 +408,68 @@
      <rect>
       <x>20</x>
       <y>195</y>
-      <width>300</width>
-      <height>190</height>
+      <width>350</width>
+      <height>160</height>
      </rect>
     </property>
    </widget>
-   <widget class="QLabel" name="label_5">
+
+   <widget class="QLabel" name="label_send">
     <property name="geometry">
      <rect>
-      <x>340</x>
+      <x>390</x>
       <y>175</y>
-      <width>120</width>
+      <width>150</width>
       <height>16</height>
      </rect>
     </property>
     <property name="text">
-     <string>Send (Message):</string>
+     <string>Message to Publish:</string>
     </property>
    </widget>
    <widget class="QPlainTextEdit" name="SendEdit">
     <property name="geometry">
      <rect>
-      <x>340</x>
+      <x>390</x>
       <y>195</y>
-      <width>320</width>
-      <height>145</height>
+      <width>370</width>
+      <height>160</height>
      </rect>
     </property>
    </widget>
-   <widget class="QLabel" name="label_8">
+
+   <!-- Row 5: System Logs and Status -->
+   <widget class="QLabel" name="label_log">
     <property name="geometry">
      <rect>
-      <x>340</x>
-      <y>348</y>
+      <x>20</x>
+      <y>365</y>
+      <width>160</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>System Logs &amp; Diagnostics:</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="ClearLogButton">
+    <property name="geometry">
+     <rect>
+      <x>200</x>
+      <y>362</y>
+      <width>75</width>
+      <height>22</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Clear Log</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="label_status">
+    <property name="geometry">
+     <rect>
+      <x>520</x>
+      <y>365</y>
       <width>50</width>
       <height>16</height>
      </rect>
@@ -340,13 +478,29 @@
      <string>Status:</string>
     </property>
    </widget>
-   <widget class="QPlainTextEdit" name="StatusEdit">
+   <widget class="QLineEdit" name="StatusEdit">
     <property name="geometry">
      <rect>
-      <x>390</x>
-      <y>345</y>
-      <width>270</width>
-      <height>35</height>
+      <x>575</x>
+      <y>362</y>
+      <width>185</width>
+      <height>22</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>Disconnected</string>
+    </property>
+    <property name="alignment">
+     <set>Qt::AlignCenter</set>
+    </property>
+   </widget>
+   <widget class="QPlainTextEdit" name="LogEdit">
+    <property name="geometry">
+     <rect>
+      <x>20</x>
+      <y>388</y>
+      <width>740</width>
+      <height>135</height>
      </rect>
     </property>
    </widget>
@@ -356,7 +510,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>680</width>
+     <width>780</width>
      <height>21</height>
     </rect>
    </property>

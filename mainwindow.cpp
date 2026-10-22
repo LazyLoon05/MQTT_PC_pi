@@ -21,7 +21,8 @@ MainWindow::MainWindow(QWidget *parent)
     ui->PassEdit->setEchoMode(QLineEdit::Password);
     ui->StatusEdit->setReadOnly(true);
     ui->RecvEdit->setReadOnly(true);
-    ui->StatusEdit->setPlainText(tr("Disconnected"));
+    ui->LogEdit->setReadOnly(true);
+    ui->StatusEdit->setText(tr("Disconnected"));
 
     if (ui->SubTopicEdit->text().isEmpty()) {
         ui->SubTopicEdit->setText(QStringLiteral("orangepi/data"));
@@ -81,7 +82,7 @@ void MainWindow::on_ConnectButton_clicked()
         m_client->setPassword(password);
     }
 
-    logMessage(QString("Connecting to broker %1:%2...").arg(host).arg(port));
+    logSystem(QString("Connecting to broker %1:%2...").arg(host).arg(port));
 
     bool useEncryption = (ui->Encryption->currentIndex() == 1);
     if (useEncryption) {
@@ -101,10 +102,10 @@ void MainWindow::on_ConnectButton_clicked()
 void MainWindow::on_CancelButton_clicked()
 {
     if (m_client->state() == QMqttClient::Connecting || m_client->state() == QMqttClient::Connected) {
-        logMessage(tr("Disconnecting from broker..."));
+        logSystem(tr("Disconnecting from broker..."));
         m_client->disconnectFromHost();
     } else {
-        logMessage(tr("Already disconnected."));
+        logSystem(tr("Already disconnected."));
     }
 }
 
@@ -127,12 +128,19 @@ void MainWindow::on_SendButton_clicked()
         return;
     }
 
-    qint32 publishId = m_client->publish(QMqttTopicName(topic), message.toUtf8(), 0);
+    quint8 qos = static_cast<quint8>(ui->PubQosCombo->currentIndex());
+    bool retain = ui->RetainCheck->isChecked();
+
+    qint32 publishId = m_client->publish(QMqttTopicName(topic), message.toUtf8(), qos, retain);
     if (publishId == -1) {
-        logMessage(QString("Failed to publish message to topic: %1").arg(topic));
+        logSystem(QString("Failed to publish message to topic: %1").arg(topic));
     } else {
         QString timeStr = QDateTime::currentDateTime().toString("HH:mm:ss");
-        logMessage(QString("[%1] [Sent -> %2]: %3").arg(timeStr, topic, message));
+        logSystem(QString("[%1] [Sent -> %2] (QoS %3%4): %5")
+                      .arg(timeStr, topic)
+                      .arg(qos)
+                      .arg(retain ? QStringLiteral(", Retain") : QString())
+                      .arg(message));
     }
 }
 
@@ -149,7 +157,8 @@ void MainWindow::on_SubButton_clicked()
         return;
     }
 
-    subscribeTopic(topic);
+    quint8 qos = static_cast<quint8>(ui->SubQosCombo->currentIndex());
+    subscribeTopic(topic, qos);
 }
 
 void MainWindow::on_UnsubButton_clicked()
@@ -166,6 +175,18 @@ void MainWindow::on_UnsubButton_clicked()
     }
 
     unsubscribeTopic(topic);
+}
+
+void MainWindow::on_ClearRecvButton_clicked()
+{
+    ui->RecvEdit->clear();
+    statusBar()->showMessage(tr("Received messages cleared"), 2000);
+}
+
+void MainWindow::on_ClearLogButton_clicked()
+{
+    ui->LogEdit->clear();
+    statusBar()->showMessage(tr("System log cleared"), 2000);
 }
 
 void MainWindow::on_Encryption_currentIndexChanged(int index)
@@ -197,7 +218,7 @@ void MainWindow::on_PingButton_clicked()
         return;
     }
 
-    logMessage(QString("Pinging broker at %1:%2...").arg(host).arg(port));
+    logSystem(QString("Pinging broker at %1:%2...").arg(host).arg(port));
     m_pingTimer.start();
     m_pingSocket->abort();
     m_pingSocket->connectToHost(host, port);
@@ -205,18 +226,19 @@ void MainWindow::on_PingButton_clicked()
 
 void MainWindow::onMqttConnected()
 {
-    logMessage(tr("Connected to MQTT Broker successfully!"));
+    logSystem(tr("Connected to MQTT Broker successfully!"));
     m_subscriptions.clear();
 
     QString defaultSub = ui->SubTopicEdit->text().trimmed();
     if (!defaultSub.isEmpty()) {
-        subscribeTopic(defaultSub);
+        quint8 qos = static_cast<quint8>(ui->SubQosCombo->currentIndex());
+        subscribeTopic(defaultSub, qos);
     }
 }
 
 void MainWindow::onMqttDisconnected()
 {
-    logMessage(tr("Disconnected from MQTT Broker."));
+    logSystem(tr("Disconnected from MQTT Broker."));
     m_subscriptions.clear();
 }
 
@@ -224,13 +246,13 @@ void MainWindow::onMqttStateChanged(QMqttClient::ClientState state)
 {
     switch (state) {
     case QMqttClient::Disconnected:
-        ui->StatusEdit->setPlainText(tr("Disconnected"));
+        ui->StatusEdit->setText(tr("Disconnected"));
         break;
     case QMqttClient::Connecting:
-        ui->StatusEdit->setPlainText(tr("Connecting..."));
+        ui->StatusEdit->setText(tr("Connecting..."));
         break;
     case QMqttClient::Connected:
-        ui->StatusEdit->setPlainText(tr("Connected"));
+        ui->StatusEdit->setText(tr("Connected"));
         break;
     }
     updateUiState();
@@ -267,8 +289,7 @@ void MainWindow::onMqttErrorChanged(QMqttClient::ClientError error)
         errStr = QString(tr("Unknown error (Code %1)")).arg(error);
         break;
     }
-    logMessage(QString("MQTT Error: %1").arg(errStr));
-    statusBar()->showMessage(QString("Error: %1").arg(errStr), 5000);
+    logSystem(QString("MQTT Error: %1").arg(errStr));
 }
 
 void MainWindow::onMqttMessageReceived(const QByteArray &message, const QMqttTopicName &topic)
@@ -281,7 +302,7 @@ void MainWindow::onMqttMessageReceived(const QByteArray &message, const QMqttTop
 
 void MainWindow::onMqttPingResponseReceived()
 {
-    logMessage(tr("MQTT Ping response received: Broker is alive (Keep-alive OK)!"));
+    logSystem(tr("MQTT Ping response received: Broker is alive (Keep-alive OK)!"));
 }
 
 void MainWindow::onTcpPingConnected()
@@ -297,39 +318,37 @@ void MainWindow::onTcpPingConnected()
                           .arg(latency)
                           .arg(sessionState);
 
-    logMessage(pingMsg);
-    statusBar()->showMessage(QString("Broker Latency: %1 ms").arg(latency), 5000);
+    logSystem(pingMsg);
     m_pingSocket->disconnectFromHost();
 }
 
 void MainWindow::onTcpPingError(QAbstractSocket::SocketError socketError)
 {
     Q_UNUSED(socketError);
-    logMessage(QString("[Ping Failed] Unable to connect to %1:%2 (%3)")
+    logSystem(QString("[Ping Failed] Unable to connect to %1:%2 (%3)")
                    .arg(ui->IpEdit->text().trimmed())
                    .arg(ui->PortEdit->text().trimmed())
                    .arg(m_pingSocket->errorString()));
-    statusBar()->showMessage(tr("Ping Failed"), 5000);
 }
 
-void MainWindow::subscribeTopic(const QString &topic)
+void MainWindow::subscribeTopic(const QString &topic, quint8 qos)
 {
     if (topic.isEmpty()) {
-        logMessage(tr("No topic specified to subscribe."));
+        logSystem(tr("No topic specified to subscribe."));
         return;
     }
 
     if (m_subscriptions.contains(topic)) {
-        logMessage(QString("Already subscribed to topic: %1").arg(topic));
+        logSystem(QString("Already subscribed to topic: %1").arg(topic));
         return;
     }
 
-    QMqttSubscription *sub = m_client->subscribe(QMqttTopicFilter(topic), 0);
+    QMqttSubscription *sub = m_client->subscribe(QMqttTopicFilter(topic), qos);
     if (!sub) {
-        logMessage(QString("Failed to subscribe to topic: %1").arg(topic));
+        logSystem(QString("Failed to subscribe to topic: %1").arg(topic));
     } else {
         m_subscriptions[topic] = sub;
-        logMessage(QString("Subscribed to topic: %1").arg(topic));
+        logSystem(QString("Subscribed to topic: %1 (QoS %2)").arg(topic).arg(qos));
     }
 }
 
@@ -341,7 +360,7 @@ void MainWindow::unsubscribeTopic(const QString &topic)
 
     m_client->unsubscribe(QMqttTopicFilter(topic));
     m_subscriptions.remove(topic);
-    logMessage(QString("Unsubscribed from topic: %1").arg(topic));
+    logSystem(QString("Unsubscribed from topic: %1").arg(topic));
 }
 
 void MainWindow::updateUiState()
@@ -362,8 +381,9 @@ void MainWindow::updateUiState()
     ui->Encryption->setEnabled(!isConnected && !isConnecting);
 }
 
-void MainWindow::logMessage(const QString &text)
+void MainWindow::logSystem(const QString &text)
 {
-    ui->RecvEdit->appendPlainText(text);
+    QString timeStr = QDateTime::currentDateTime().toString("HH:mm:ss");
+    ui->LogEdit->appendPlainText(QString("[%1] %2").arg(timeStr, text));
     statusBar()->showMessage(text, 3000);
 }
