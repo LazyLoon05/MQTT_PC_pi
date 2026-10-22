@@ -13,7 +13,6 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , m_client(new QMqttClient(this))
-    , m_sub(nullptr)
     , m_pingSocket(new QTcpSocket(this))
 {
     ui->setupUi(this);
@@ -24,8 +23,11 @@ MainWindow::MainWindow(QWidget *parent)
     ui->RecvEdit->setReadOnly(true);
     ui->StatusEdit->setPlainText(tr("Disconnected"));
 
-    if (ui->TopicEdit->text().isEmpty()) {
-        ui->TopicEdit->setText(QStringLiteral("test/topic"));
+    if (ui->SubTopicEdit->text().isEmpty()) {
+        ui->SubTopicEdit->setText(QStringLiteral("orangepi/data"));
+    }
+    if (ui->PubTopicEdit->text().isEmpty()) {
+        ui->PubTopicEdit->setText(QStringLiteral("orangepi/cmd"));
     }
 
     // Connect QMqttClient signals
@@ -113,9 +115,9 @@ void MainWindow::on_SendButton_clicked()
         return;
     }
 
-    QString topic = ui->TopicEdit->text().trimmed();
+    QString topic = ui->PubTopicEdit->text().trimmed();
     if (topic.isEmpty()) {
-        QMessageBox::warning(this, tr("Warning"), tr("Please enter a topic before publishing!"));
+        QMessageBox::warning(this, tr("Warning"), tr("Please enter a Publish Topic before sending!"));
         return;
     }
 
@@ -132,6 +134,38 @@ void MainWindow::on_SendButton_clicked()
         QString timeStr = QDateTime::currentDateTime().toString("HH:mm:ss");
         logMessage(QString("[%1] [Sent -> %2]: %3").arg(timeStr, topic, message));
     }
+}
+
+void MainWindow::on_SubButton_clicked()
+{
+    if (m_client->state() != QMqttClient::Connected) {
+        QMessageBox::warning(this, tr("Warning"), tr("MQTT client is not connected to broker!"));
+        return;
+    }
+
+    QString topic = ui->SubTopicEdit->text().trimmed();
+    if (topic.isEmpty()) {
+        QMessageBox::warning(this, tr("Warning"), tr("Please enter a Subscribe Topic."));
+        return;
+    }
+
+    subscribeTopic(topic);
+}
+
+void MainWindow::on_UnsubButton_clicked()
+{
+    if (m_client->state() != QMqttClient::Connected) {
+        QMessageBox::warning(this, tr("Warning"), tr("MQTT client is not connected to broker!"));
+        return;
+    }
+
+    QString topic = ui->SubTopicEdit->text().trimmed();
+    if (topic.isEmpty()) {
+        QMessageBox::warning(this, tr("Warning"), tr("Please enter a Subscribe Topic to unsubscribe."));
+        return;
+    }
+
+    unsubscribeTopic(topic);
 }
 
 void MainWindow::on_Encryption_currentIndexChanged(int index)
@@ -172,13 +206,18 @@ void MainWindow::on_PingButton_clicked()
 void MainWindow::onMqttConnected()
 {
     logMessage(tr("Connected to MQTT Broker successfully!"));
-    subscribeTopic();
+    m_subscriptions.clear();
+
+    QString defaultSub = ui->SubTopicEdit->text().trimmed();
+    if (!defaultSub.isEmpty()) {
+        subscribeTopic(defaultSub);
+    }
 }
 
 void MainWindow::onMqttDisconnected()
 {
     logMessage(tr("Disconnected from MQTT Broker."));
-    m_sub = nullptr;
+    m_subscriptions.clear();
 }
 
 void MainWindow::onMqttStateChanged(QMqttClient::ClientState state)
@@ -273,20 +312,36 @@ void MainWindow::onTcpPingError(QAbstractSocket::SocketError socketError)
     statusBar()->showMessage(tr("Ping Failed"), 5000);
 }
 
-void MainWindow::subscribeTopic()
+void MainWindow::subscribeTopic(const QString &topic)
 {
-    QString topic = ui->TopicEdit->text().trimmed();
     if (topic.isEmpty()) {
         logMessage(tr("No topic specified to subscribe."));
         return;
     }
 
-    m_sub = m_client->subscribe(QMqttTopicFilter(topic), 0);
-    if (!m_sub) {
+    if (m_subscriptions.contains(topic)) {
+        logMessage(QString("Already subscribed to topic: %1").arg(topic));
+        return;
+    }
+
+    QMqttSubscription *sub = m_client->subscribe(QMqttTopicFilter(topic), 0);
+    if (!sub) {
         logMessage(QString("Failed to subscribe to topic: %1").arg(topic));
     } else {
+        m_subscriptions[topic] = sub;
         logMessage(QString("Subscribed to topic: %1").arg(topic));
     }
+}
+
+void MainWindow::unsubscribeTopic(const QString &topic)
+{
+    if (topic.isEmpty()) {
+        return;
+    }
+
+    m_client->unsubscribe(QMqttTopicFilter(topic));
+    m_subscriptions.remove(topic);
+    logMessage(QString("Unsubscribed from topic: %1").arg(topic));
 }
 
 void MainWindow::updateUiState()
@@ -297,6 +352,8 @@ void MainWindow::updateUiState()
     ui->ConnectButton->setEnabled(!isConnected && !isConnecting);
     ui->CancelButton->setEnabled(isConnected || isConnecting);
     ui->SendButton->setEnabled(isConnected);
+    ui->SubButton->setEnabled(isConnected);
+    ui->UnsubButton->setEnabled(isConnected);
 
     ui->IpEdit->setEnabled(!isConnected && !isConnecting);
     ui->PortEdit->setEnabled(!isConnected && !isConnecting);

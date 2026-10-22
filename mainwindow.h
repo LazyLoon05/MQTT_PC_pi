@@ -6,6 +6,7 @@
 #include <QMqttSubscription>
 #include <QTcpSocket>
 #include <QElapsedTimer>
+#include <QMap>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -27,6 +28,8 @@ private slots:
     void on_CancelButton_clicked();
     void on_SendButton_clicked();
     void on_PingButton_clicked();
+    void on_SubButton_clicked();
+    void on_UnsubButton_clicked();
     void on_Encryption_currentIndexChanged(int index);
 
     // MQTT Client Slots
@@ -37,18 +40,19 @@ private slots:
     void onMqttMessageReceived(const QByteArray &message, const QMqttTopicName &topic);
     void onMqttPingResponseReceived();
 
-    // TCP Ping Probe Slot (when not connected)
+    // TCP Ping Probe Slot
     void onTcpPingConnected();
     void onTcpPingError(QAbstractSocket::SocketError socketError);
 
 private:
     void updateUiState();
-    void subscribeTopic();
+    void subscribeTopic(const QString &topic);
+    void unsubscribeTopic(const QString &topic);
     void logMessage(const QString &text);
 
     Ui::MainWindow *ui;
     QMqttClient *m_client;
-    QMqttSubscription *m_sub;
+    QMap<QString, QMqttSubscription*> m_subscriptions;
     QTcpSocket *m_pingSocket;
     QElapsedTimer m_pingTimer;
 };
