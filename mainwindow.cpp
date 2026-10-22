@@ -134,26 +134,39 @@ void MainWindow::on_SendButton_clicked()
     }
 }
 
+void MainWindow::on_Encryption_currentIndexChanged(int index)
+{
+    if (index == 1) { // Encryption selected
+        if (ui->PortEdit->text().trimmed() == QStringLiteral("1883")) {
+            ui->PortEdit->setText(QStringLiteral("8883"));
+        }
+#ifndef QT_NO_SSL
+        if (!QSslSocket::supportsSsl()) {
+            QMessageBox::warning(this, tr("SSL Warning"),
+                tr("OpenSSL libraries were not found on this system.\nSSL encrypted connection may fail if DLLs are missing."));
+        }
+#endif
+    } else { // No Encryption
+        if (ui->PortEdit->text().trimmed() == QStringLiteral("8883")) {
+            ui->PortEdit->setText(QStringLiteral("1883"));
+        }
+    }
+}
+
 void MainWindow::on_PingButton_clicked()
 {
-    if (m_client->state() == QMqttClient::Connected) {
-        logMessage(tr("Sending MQTT Ping request to Broker..."));
-        if (!m_client->requestPing()) {
-            logMessage(tr("Failed to send MQTT Ping request."));
-        }
-    } else {
-        QString host = ui->IpEdit->text().trimmed();
-        quint16 port = ui->PortEdit->text().toUShort();
+    QString host = ui->IpEdit->text().trimmed();
+    quint16 port = ui->PortEdit->text().toUShort();
 
-        if (host.isEmpty() || port == 0) {
-            QMessageBox::warning(this, tr("Warning"), tr("Please enter valid IP and Port to test Ping."));
-            return;
-        }
-
-        logMessage(QString("Probing TCP connection to %1:%2...").arg(host).arg(port));
-        m_pingSocket->abort();
-        m_pingSocket->connectToHost(host, port);
+    if (host.isEmpty() || port == 0) {
+        QMessageBox::warning(this, tr("Warning"), tr("Please enter valid IP and Port to test Ping."));
+        return;
     }
+
+    logMessage(QString("Pinging broker at %1:%2...").arg(host).arg(port));
+    m_pingTimer.start();
+    m_pingSocket->abort();
+    m_pingSocket->connectToHost(host, port);
 }
 
 void MainWindow::onMqttConnected()
@@ -234,19 +247,30 @@ void MainWindow::onMqttPingResponseReceived()
 
 void MainWindow::onTcpPingConnected()
 {
-    logMessage(QString("TCP Ping OK: Successfully reached Broker at %1:%2!")
-                   .arg(ui->IpEdit->text().trimmed())
-                   .arg(ui->PortEdit->text().trimmed()));
+    qint64 latency = m_pingTimer.elapsed();
+    QString sessionState = (m_client->state() == QMqttClient::Connected)
+                               ? tr("MQTT Connected")
+                               : tr("MQTT Disconnected");
+
+    QString pingMsg = QString("[Ping OK] Broker %1:%2 | Latency: %3 ms (%4)")
+                          .arg(ui->IpEdit->text().trimmed())
+                          .arg(ui->PortEdit->text().trimmed())
+                          .arg(latency)
+                          .arg(sessionState);
+
+    logMessage(pingMsg);
+    statusBar()->showMessage(QString("Broker Latency: %1 ms").arg(latency), 5000);
     m_pingSocket->disconnectFromHost();
 }
 
 void MainWindow::onTcpPingError(QAbstractSocket::SocketError socketError)
 {
     Q_UNUSED(socketError);
-    logMessage(QString("TCP Ping Failed: Unable to connect to %1:%2 (%3)")
+    logMessage(QString("[Ping Failed] Unable to connect to %1:%2 (%3)")
                    .arg(ui->IpEdit->text().trimmed())
                    .arg(ui->PortEdit->text().trimmed())
                    .arg(m_pingSocket->errorString()));
+    statusBar()->showMessage(tr("Ping Failed"), 5000);
 }
 
 void MainWindow::subscribeTopic()

@@ -5,6 +5,7 @@
 #include <QMqttClient>
 #include <QMqttSubscription>
 #include <QTcpSocket>
+#include <QElapsedTimer>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -26,6 +27,7 @@ private slots:
     void on_CancelButton_clicked();
     void on_SendButton_clicked();
     void on_PingButton_clicked();
+    void on_Encryption_currentIndexChanged(int index);
 
     // MQTT Client Slots
     void onMqttConnected();
@@ -48,6 +50,7 @@ private:
     QMqttClient *m_client;
     QMqttSubscription *m_sub;
     QTcpSocket *m_pingSocket;
+    QElapsedTimer m_pingTimer;
 };
 
 #endif // MAINWINDOW_H
