@@ -4,8 +4,11 @@
 #include <QObject>
 #include <QMqttClient>
 #include <QMqttSubscription>
+#include <QTcpSocket>
+#include <QElapsedTimer>
 #include <QThread>
 #include <QTimer>
+#include <QMap>
 #include <atomic>
 
 class ConsoleInputWorker : public QThread
@@ -33,7 +36,9 @@ public:
     struct Config {
         QString host = QStringLiteral("192.168.0.104");
         quint16 port = 1883;
-        QString topic = QStringLiteral("test/topic");
+        QString subTopic = QStringLiteral("orangepi/cmd");
+        QString pubTopic = QStringLiteral("orangepi/data");
+        QString statusTopic = QStringLiteral("orangepi/status");
         QString username;
         QString password;
         QString clientId = QStringLiteral("OrangePi_Client");
@@ -53,19 +58,27 @@ public slots:
     void onMqttMessageReceived(const QByteArray &message, const QMqttTopicName &topic);
     void onMqttPingResponseReceived();
 
+    void onTcpPingConnected();
+    void onTcpPingError(QAbstractSocket::SocketError socketError);
+
     void onConsoleInput(const QString &line);
     void onHeartbeatTimeout();
     void tryConnect();
 
 private:
     void printHelp();
-    void publishMessage(const QString &topic, const QString &message);
-    void subscribeTopic(const QString &topic);
+    void publishMessage(const QString &topic, const QString &message, quint8 qos = 0, bool retain = false);
+    void subscribeTopic(const QString &topic, quint8 qos = 0);
+    void unsubscribeTopic(const QString &topic);
+    void publishOnlineStatus(bool online);
+    void sendPingProbe();
     void log(const QString &tag, const QString &message);
 
     Config m_config;
     QMqttClient *m_client;
-    QMqttSubscription *m_sub;
+    QMap<QString, QMqttSubscription*> m_subscriptions;
+    QTcpSocket *m_pingSocket;
+    QElapsedTimer m_pingTimer;
     ConsoleInputWorker *m_inputWorker;
     QTimer *m_heartbeatTimer;
     QTimer *m_reconnectTimer;

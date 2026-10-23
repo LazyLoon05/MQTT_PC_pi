@@ -32,7 +32,7 @@ MqttConsoleClient::MqttConsoleClient(const Config &config, QObject *parent)
     : QObject(parent)
     , m_config(config)
     , m_client(new QMqttClient(this))
-    , m_sub(nullptr)
+    , m_pingSocket(new QTcpSocket(this))
     , m_inputWorker(new ConsoleInputWorker(this))
     , m_heartbeatTimer(new QTimer(this))
     , m_reconnectTimer(new QTimer(this))
@@ -45,6 +45,11 @@ MqttConsoleClient::MqttConsoleClient(const Config &config, QObject *parent)
     connect(m_client, &QMqttClient::errorChanged, this, &MqttConsoleClient::onMqttErrorChanged);
     connect(m_client, &QMqttClient::messageReceived, this, &MqttConsoleClient::onMqttMessageReceived);
     connect(m_client, &QMqttClient::pingResponseReceived, this, &MqttConsoleClient::onMqttPingResponseReceived);
+
+    // Connect TCP Ping probe socket signals
+    connect(m_pingSocket, &QTcpSocket::connected, this, &MqttConsoleClient::onTcpPingConnected);
+    connect(m_pingSocket, QOverload<QAbstractSocket::SocketError>::of(&QAbstractSocket::error),
+            this, &MqttConsoleClient::onTcpPingError);
 
     // Connect Console Input worker
     connect(m_inputWorker, &ConsoleInputWorker::lineReceived, this, &MqttConsoleClient::onConsoleInput);
@@ -67,6 +72,7 @@ MqttConsoleClient::~MqttConsoleClient()
     m_inputWorker->wait(1000);
 
     if (m_client->state() == QMqttClient::Connected) {
+        publishOnlineStatus(false);
         m_client->disconnectFromHost();
     }
 }
@@ -76,17 +82,19 @@ void MqttConsoleClient::start()
     std::cout << "======================================================" << std::endl;
     std::cout << "  MQTT Console Client (Orange Pi / Linux / Embedded)  " << std::endl;
     std::cout << "======================================================" << std::endl;
-    std::cout << "Broker Host : " << m_config.host.toStdString() << ":" << m_config.port << std::endl;
-    std::cout << "Client ID   : " << m_config.clientId.toStdString() << std::endl;
-    std::cout << "Topic       : " << m_config.topic.toStdString() << std::endl;
+    std::cout << "Broker Host  : " << m_config.host.toStdString() << ":" << m_config.port << std::endl;
+    std::cout << "Client ID    : " << m_config.clientId.toStdString() << std::endl;
+    std::cout << "Sub Topic    : " << m_config.subTopic.toStdString() << " (Listen from PC)" << std::endl;
+    std::cout << "Pub Topic    : " << m_config.pubTopic.toStdString() << " (Send to PC)" << std::endl;
+    std::cout << "Status Topic : " << m_config.statusTopic.toStdString() << " (LWT Online/Offline)" << std::endl;
     if (!m_config.username.isEmpty()) {
-        std::cout << "Username    : " << m_config.username.toStdString() << std::endl;
+        std::cout << "Username     : " << m_config.username.toStdString() << std::endl;
     }
     if (m_config.heartbeatInterval > 0) {
-        std::cout << "Heartbeat   : Every " << m_config.heartbeatInterval << "s" << std::endl;
+        std::cout << "Heartbeat    : Every " << m_config.heartbeatInterval << "s" << std::endl;
     }
     std::cout << "------------------------------------------------------" << std::endl;
-    std::cout << "Type any message and press Enter to publish." << std::endl;
+    std::cout << "Type any message and press Enter to publish to Pub Topic." << std::endl;
     std::cout << "Type :help for a list of console commands." << std::endl;
     std::cout << "======================================================" << std::endl << std::endl;
 
@@ -110,6 +118,7 @@ void MqttConsoleClient::tryConnect()
     m_client->setPort(m_config.port);
     m_client->setClientId(m_config.clientId);
     m_client->setKeepAlive(60);
+    m_client->setCleanSession(true);
 
     if (!m_config.username.isEmpty()) {
         m_client->setUsername(m_config.username);
@@ -118,16 +127,32 @@ void MqttConsoleClient::tryConnect()
         m_client->setPassword(m_config.password);
     }
 
+    // Configure Last Will and Testament (LWT)
+    if (!m_config.statusTopic.isEmpty()) {
+        QString willPayload = QString("{\"device\":\"%1\",\"status\":\"offline\"}")
+                                  .arg(m_config.clientId);
+        m_client->setWillTopic(m_config.statusTopic);
+        m_client->setWillMessage(willPayload.toUtf8());
+        m_client->setWillQoS(1);
+        m_client->setWillRetain(true);
+    }
+
     m_client->connectToHost();
 }
 
 void MqttConsoleClient::onMqttConnected()
 {
     m_reconnectTimer->stop();
-    log(QStringLiteral("CONNECTED"), QString("Successfully connected to broker %1:%2!").arg(m_config.host).arg(m_config.port));
+    m_subscriptions.clear();
 
-    // Subscribe to default topic
-    subscribeTopic(m_config.topic);
+    log(QStringLiteral("CONNECTED"),
+        QString("Successfully connected to broker %1:%2!").arg(m_config.host).arg(m_config.port));
+
+    // Publish Online status (Retained) to Status Topic
+    publishOnlineStatus(true);
+
+    // Subscribe to default command topic from PC
+    subscribeTopic(m_config.subTopic, 1);
 
     // Start heartbeat timer if configured
     if (m_config.heartbeatInterval > 0 && !m_heartbeatTimer->isActive()) {
@@ -138,7 +163,7 @@ void MqttConsoleClient::onMqttConnected()
 void MqttConsoleClient::onMqttDisconnected()
 {
     log(QStringLiteral("DISCONNECTED"), QStringLiteral("Lost connection to broker. Will retry in 5s..."));
-    m_sub = nullptr;
+    m_subscriptions.clear();
 
     if (m_heartbeatTimer->isActive()) {
         m_heartbeatTimer->stop();
@@ -212,6 +237,40 @@ void MqttConsoleClient::onMqttPingResponseReceived()
     log(QStringLiteral("PING"), QStringLiteral("MQTT Ping ACK received from Broker (Keep-alive OK)."));
 }
 
+void MqttConsoleClient::sendPingProbe()
+{
+    log(QStringLiteral("PING"), QString("Pinging broker at %1:%2...").arg(m_config.host).arg(m_config.port));
+    m_pingTimer.start();
+    m_pingSocket->abort();
+    m_pingSocket->connectToHost(m_config.host, m_config.port);
+}
+
+void MqttConsoleClient::onTcpPingConnected()
+{
+    qint64 latency = m_pingTimer.elapsed();
+    QString sessionState = (m_client->state() == QMqttClient::Connected)
+                               ? QStringLiteral("MQTT Connected")
+                               : QStringLiteral("MQTT Disconnected");
+
+    log(QStringLiteral("PING"),
+        QString("Broker %1:%2 reachable | Latency: %3 ms (%4)")
+            .arg(m_config.host)
+            .arg(m_config.port)
+            .arg(latency)
+            .arg(sessionState));
+    m_pingSocket->disconnectFromHost();
+}
+
+void MqttConsoleClient::onTcpPingError(QAbstractSocket::SocketError socketError)
+{
+    Q_UNUSED(socketError);
+    log(QStringLiteral("PING"),
+        QString("Ping Failed: Unable to reach %1:%2 (%3)")
+            .arg(m_config.host)
+            .arg(m_config.port)
+            .arg(m_pingSocket->errorString()));
+}
+
 void MqttConsoleClient::onConsoleInput(const QString &rawLine)
 {
     QString line = rawLine.trimmed();
@@ -226,58 +285,77 @@ void MqttConsoleClient::onConsoleInput(const QString &rawLine)
         if (cmd == QStringLiteral(":help")) {
             printHelp();
         } else if (cmd == QStringLiteral(":ping")) {
-            if (m_client->state() == QMqttClient::Connected) {
-                log(QStringLiteral("PING"), QStringLiteral("Sending MQTT PINGREQ to Broker..."));
-                m_client->requestPing();
-            } else {
-                log(QStringLiteral("WARN"), QStringLiteral("Client is not connected. Cannot send ping."));
-            }
-        } else if (cmd == QStringLiteral(":topic")) {
+            sendPingProbe();
+        } else if (cmd == QStringLiteral(":pubtopic") || cmd == QStringLiteral(":topic")) {
             if (parts.size() >= 2) {
                 QString newTopic = parts.value(1).trimmed();
-                m_config.topic = newTopic;
-                log(QStringLiteral("INFO"), QString("Default topic changed to: %1").arg(newTopic));
+                m_config.pubTopic = newTopic;
+                log(QStringLiteral("INFO"), QString("Default Publish Topic changed to: %1").arg(newTopic));
+            } else {
+                log(QStringLiteral("INFO"), QString("Current Publish Topic is: %1").arg(m_config.pubTopic));
+            }
+        } else if (cmd == QStringLiteral(":subtopic")) {
+            if (parts.size() >= 2) {
+                QString newTopic = parts.value(1).trimmed();
+                if (m_client->state() == QMqttClient::Connected && !m_config.subTopic.isEmpty()) {
+                    unsubscribeTopic(m_config.subTopic);
+                }
+                m_config.subTopic = newTopic;
+                log(QStringLiteral("INFO"), QString("Default Subscribe Topic changed to: %1").arg(newTopic));
                 if (m_client->state() == QMqttClient::Connected) {
-                    subscribeTopic(newTopic);
+                    subscribeTopic(newTopic, 1);
                 }
             } else {
-                log(QStringLiteral("INFO"), QString("Current default topic is: %1").arg(m_config.topic));
+                log(QStringLiteral("INFO"), QString("Current Subscribe Topic is: %1").arg(m_config.subTopic));
             }
         } else if (cmd == QStringLiteral(":sub")) {
             if (parts.size() >= 2) {
-                subscribeTopic(parts.value(1).trimmed());
+                subscribeTopic(parts.value(1).trimmed(), 1);
             } else {
                 log(QStringLiteral("WARN"), QStringLiteral("Usage: :sub <topic_name>"));
+            }
+        } else if (cmd == QStringLiteral(":unsub")) {
+            if (parts.size() >= 2) {
+                unsubscribeTopic(parts.value(1).trimmed());
+            } else {
+                log(QStringLiteral("WARN"), QStringLiteral("Usage: :unsub <topic_name>"));
             }
         } else if (cmd == QStringLiteral(":pub")) {
             if (parts.size() >= 3) {
                 QString targetTopic = parts.value(1);
                 QString message = line.section(QLatin1Char(' '), 2);
-                publishMessage(targetTopic, message);
+                publishMessage(targetTopic, message, 0, false);
             } else {
                 log(QStringLiteral("WARN"), QStringLiteral("Usage: :pub <topic> <message>"));
             }
         } else if (cmd == QStringLiteral(":status")) {
-            std::cout << "--- Status ---" << std::endl;
-            std::cout << "Broker   : " << m_config.host.toStdString() << ":" << m_config.port << std::endl;
-            std::cout << "State    : " << (m_client->state() == QMqttClient::Connected ? "Connected" : "Disconnected") << std::endl;
-            std::cout << "Topic    : " << m_config.topic.toStdString() << std::endl;
-            std::cout << "Client ID: " << m_config.clientId.toStdString() << std::endl;
-            std::cout << "--------------" << std::endl;
+            std::cout << "\n--- Orange Pi MQTT Status ---" << std::endl;
+            std::cout << "Broker       : " << m_config.host.toStdString() << ":" << m_config.port << std::endl;
+            std::cout << "State        : " << (m_client->state() == QMqttClient::Connected ? "Connected" : "Disconnected") << std::endl;
+            std::cout << "Client ID    : " << m_config.clientId.toStdString() << std::endl;
+            std::cout << "Sub Topic    : " << m_config.subTopic.toStdString() << std::endl;
+            std::cout << "Pub Topic    : " << m_config.pubTopic.toStdString() << std::endl;
+            std::cout << "Status Topic : " << m_config.statusTopic.toStdString() << " (LWT)" << std::endl;
+            std::cout << "Active Subs  : " << m_subscriptions.keys().join(QStringLiteral(", ")).toStdString() << std::endl;
+            std::cout << "-----------------------------\n" << std::endl;
         } else if (cmd == QStringLiteral(":reconnect")) {
             log(QStringLiteral("INFO"), QStringLiteral("Reconnecting on request..."));
             m_client->disconnectFromHost();
             m_reconnectTimer->stop();
             tryConnect();
         } else if (cmd == QStringLiteral(":quit") || cmd == QStringLiteral(":q")) {
-            log(QStringLiteral("INFO"), QStringLiteral("Exiting application..."));
+            log(QStringLiteral("INFO"), QStringLiteral("Publishing offline status and exiting..."));
+            if (m_client->state() == QMqttClient::Connected) {
+                publishOnlineStatus(false);
+                m_client->disconnectFromHost();
+            }
             QCoreApplication::quit();
         } else {
             log(QStringLiteral("WARN"), QString("Unknown command: %1. Type :help for commands.").arg(cmd));
         }
     } else {
-        // Plain text is published directly to default topic
-        publishMessage(m_config.topic, line);
+        // Plain text is published directly to default Pub Topic
+        publishMessage(m_config.pubTopic, line, 0, false);
     }
 }
 
@@ -290,17 +368,30 @@ void MqttConsoleClient::onHeartbeatTimeout()
     QString payload = QString("{\"device\":\"%1\",\"status\":\"online\",\"uptime_s\":%2}")
                           .arg(m_config.clientId)
                           .arg(m_uptimeSeconds);
-    publishMessage(m_config.topic, payload);
+    publishMessage(m_config.pubTopic, payload, 0, false);
 }
 
-void MqttConsoleClient::publishMessage(const QString &topic, const QString &message)
+void MqttConsoleClient::publishOnlineStatus(bool online)
+{
+    if (m_client->state() != QMqttClient::Connected || m_config.statusTopic.isEmpty()) {
+        return;
+    }
+    QString statusStr = online ? QStringLiteral("online") : QStringLiteral("offline");
+    QString payload = QString("{\"device\":\"%1\",\"status\":\"%2\"}")
+                          .arg(m_config.clientId, statusStr);
+    m_client->publish(QMqttTopicName(m_config.statusTopic), payload.toUtf8(), 1, true);
+    log(QStringLiteral("LWT/STATUS"),
+        QString("Published [%1] (Retain) -> %2").arg( m_config.statusTopic, payload));
+}
+
+void MqttConsoleClient::publishMessage(const QString &topic, const QString &message, quint8 qos, bool retain)
 {
     if (m_client->state() != QMqttClient::Connected) {
         log(QStringLiteral("WARN"), QStringLiteral("Cannot publish: Not connected to Broker!"));
         return;
     }
 
-    qint32 id = m_client->publish(QMqttTopicName(topic), message.toUtf8(), 0);
+    qint32 id = m_client->publish(QMqttTopicName(topic), message.toUtf8(), qos, retain);
     if (id == -1) {
         log(QStringLiteral("ERROR"), QString("Failed to publish to topic: %1").arg(topic));
     } else {
@@ -308,30 +399,47 @@ void MqttConsoleClient::publishMessage(const QString &topic, const QString &mess
     }
 }
 
-void MqttConsoleClient::subscribeTopic(const QString &topic)
+void MqttConsoleClient::subscribeTopic(const QString &topic, quint8 qos)
 {
     if (topic.isEmpty()) {
         return;
     }
-    QMqttSubscription *sub = m_client->subscribe(QMqttTopicFilter(topic), 0);
+    if (m_subscriptions.contains(topic)) {
+        log(QStringLiteral("INFO"), QString("Already subscribed to topic: %1").arg(topic));
+        return;
+    }
+    QMqttSubscription *sub = m_client->subscribe(QMqttTopicFilter(topic), qos);
     if (!sub) {
         log(QStringLiteral("ERROR"), QString("Failed to subscribe to topic: %1").arg(topic));
     } else {
-        log(QStringLiteral("SUB"), QString("Subscribed to topic: %1").arg(topic));
+        m_subscriptions[topic] = sub;
+        log(QStringLiteral("SUB"), QString("Subscribed to topic: %1 (QoS %2)").arg(topic).arg(qos));
     }
+}
+
+void MqttConsoleClient::unsubscribeTopic(const QString &topic)
+{
+    if (topic.isEmpty()) {
+        return;
+    }
+    m_client->unsubscribe(QMqttTopicFilter(topic));
+    m_subscriptions.remove(topic);
+    log(QStringLiteral("UNSUB"), QString("Unsubscribed from topic: %1").arg(topic));
 }
 
 void MqttConsoleClient::printHelp()
 {
     std::cout << "\n--- Console Commands ---" << std::endl;
-    std::cout << "  <message>              : Publish message to default topic" << std::endl;
+    std::cout << "  <message>              : Publish message to default Pub Topic (" << m_config.pubTopic.toStdString() << ")" << std::endl;
     std::cout << "  :pub <topic> <message> : Publish message to a specific topic" << std::endl;
     std::cout << "  :sub <topic>           : Subscribe to an additional topic" << std::endl;
-    std::cout << "  :topic [new_topic]     : View or change default topic" << std::endl;
-    std::cout << "  :ping                  : Send MQTT PINGREQ to Broker" << std::endl;
-    std::cout << "  :status                : Show current connection and settings" << std::endl;
+    std::cout << "  :unsub <topic>         : Unsubscribe from a topic" << std::endl;
+    std::cout << "  :pubtopic [new_topic]  : View or change default Publish Topic" << std::endl;
+    std::cout << "  :subtopic [new_topic]  : View or change default Subscribe Topic" << std::endl;
+    std::cout << "  :ping                  : Measure TCP latency (ms) to Broker" << std::endl;
+    std::cout << "  :status                : Show connection status, topics, and active subs" << std::endl;
     std::cout << "  :reconnect             : Force reconnect to broker" << std::endl;
-    std::cout << "  :quit (or :q)          : Exit application" << std::endl;
+    std::cout << "  :quit (or :q)          : Publish offline status and exit" << std::endl;
     std::cout << "------------------------\n" << std::endl;
 }
 

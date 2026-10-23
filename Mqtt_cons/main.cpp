@@ -6,7 +6,7 @@ int main(int argc, char *argv[])
 {
     QCoreApplication a(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("Mqtt_cons"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("1.0.0"));
+    QCoreApplication::setApplicationVersion(QStringLiteral("1.1.0"));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Qt MQTT Console Client for Orange Pi / Linux"));
@@ -27,10 +27,27 @@ int main(int argc, char *argv[])
                                   QStringLiteral("1883"));
     parser.addOption(portOption);
 
+    QCommandLineOption subTopicOption(QStringList() << QStringLiteral("s") << QStringLiteral("sub-topic"),
+                                      QStringLiteral("Topic to subscribe (receive commands from PC)."),
+                                      QStringLiteral("sub_topic"),
+                                      QStringLiteral("orangepi/cmd"));
+    parser.addOption(subTopicOption);
+
+    QCommandLineOption pubTopicOption(QStringList() << QStringLiteral("d") << QStringLiteral("pub-topic"),
+                                      QStringLiteral("Topic to publish (send data to PC)."),
+                                      QStringLiteral("pub_topic"),
+                                      QStringLiteral("orangepi/data"));
+    parser.addOption(pubTopicOption);
+
+    QCommandLineOption statusTopicOption(QStringList() << QStringLiteral("status-topic"),
+                                         QStringLiteral("Topic for LWT Online/Offline status."),
+                                         QStringLiteral("status_topic"),
+                                         QStringLiteral("orangepi/status"));
+    parser.addOption(statusTopicOption);
+
     QCommandLineOption topicOption(QStringList() << QStringLiteral("t") << QStringLiteral("topic"),
-                                   QStringLiteral("Default topic to publish/subscribe."),
-                                   QStringLiteral("topic"),
-                                   QStringLiteral("test/topic"));
+                                   QStringLiteral("Optional: Set both sub and pub to the same topic."),
+                                   QStringLiteral("topic"));
     parser.addOption(topicOption);
 
     QCommandLineOption userOption(QStringList() << QStringLiteral("u") << QStringLiteral("user"),
@@ -65,7 +82,16 @@ int main(int argc, char *argv[])
     MqttConsoleClient::Config config;
     config.host = parser.value(hostOption);
     config.port = parser.value(portOption).toUShort();
-    config.topic = parser.value(topicOption);
+    config.subTopic = parser.value(subTopicOption);
+    config.pubTopic = parser.value(pubTopicOption);
+    config.statusTopic = parser.value(statusTopicOption);
+
+    if (parser.isSet(topicOption)) {
+        QString sharedTopic = parser.value(topicOption);
+        config.subTopic = sharedTopic;
+        config.pubTopic = sharedTopic;
+    }
+
     config.username = parser.value(userOption);
     config.password = parser.value(passOption);
     config.clientId = parser.value(idOption);
