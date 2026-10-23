@@ -5,11 +5,24 @@
 #include <cmath>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTextStream>
+
+#ifdef Q_OS_UNIX
+#include <poll.h>
+#include <unistd.h>
+#endif
+
+volatile std::sig_atomic_t MqttConsoleClient::s_stopSignalReceived = 0;
+
+void MqttConsoleClient::handlePosixSignal(int sig)
+{
+    s_stopSignalReceived = sig;
+}
 
 ConsoleInputWorker::ConsoleInputWorker(QObject *parent)
     : QThread(parent)
@@ -25,12 +38,46 @@ void ConsoleInputWorker::stop()
 void ConsoleInputWorker::run()
 {
     std::string line;
+#ifdef Q_OS_UNIX
+    while (m_running) {
+        struct pollfd pfd;
+        pfd.fd = STDIN_FILENO;
+        pfd.events = POLLIN;
+        int ret = poll(&pfd, 1, 200); // 200ms non-blocking poll
+        if (ret > 0 && (pfd.revents & POLLIN)) {
+            if (std::getline(std::cin, line)) {
+                if (!m_running) {
+                    break;
+                }
+                QString qline = QString::fromStdString(line);
+                emit lineReceived(qline);
+                QString cmd = qline.trimmed().toLower();
+                if (cmd == QStringLiteral(":quit") || cmd == QStringLiteral(":q")) {
+                    m_running = false;
+                    break;
+                }
+            } else {
+                // EOF on stdin (e.g., running as background service)
+                break;
+            }
+        } else if (ret < 0) {
+            break;
+        }
+    }
+#else
     while (m_running && std::getline(std::cin, line)) {
         if (!m_running) {
             break;
         }
-        emit lineReceived(QString::fromStdString(line));
+        QString qline = QString::fromStdString(line);
+        emit lineReceived(qline);
+        QString cmd = qline.trimmed().toLower();
+        if (cmd == QStringLiteral(":quit") || cmd == QStringLiteral(":q")) {
+            m_running = false;
+            break;
+        }
     }
+#endif
 }
 
 MqttConsoleClient::MqttConsoleClient(const Config &config, QObject *parent)
@@ -41,6 +88,8 @@ MqttConsoleClient::MqttConsoleClient(const Config &config, QObject *parent)
     , m_inputWorker(new ConsoleInputWorker(this))
     , m_heartbeatTimer(new QTimer(this))
     , m_reconnectTimer(new QTimer(this))
+    , m_signalWatchTimer(new QTimer(this))
+    , m_shuttingDown(false)
 {
     m_appUptimeTimer.start();
 
@@ -69,18 +118,51 @@ MqttConsoleClient::MqttConsoleClient(const Config &config, QObject *parent)
     if (m_config.heartbeatInterval > 0) {
         m_heartbeatTimer->setInterval(m_config.heartbeatInterval * 1000);
     }
+
+    // Signal watcher timer (checks SIGINT / SIGTERM every 200ms)
+    m_signalWatchTimer->setInterval(200);
+    connect(m_signalWatchTimer, &QTimer::timeout, this, &MqttConsoleClient::checkSignalFlag);
+    m_signalWatchTimer->start();
 }
 
 MqttConsoleClient::~MqttConsoleClient()
 {
+    gracefulShutdown();
+}
+
+void MqttConsoleClient::checkSignalFlag()
+{
+    if (s_stopSignalReceived != 0 && !m_shuttingDown) {
+        std::cout << std::endl;
+        log(QStringLiteral("SHUTDOWN"),
+            QString("Caught OS signal (%1). Initiating graceful shutdown...").arg(s_stopSignalReceived));
+        gracefulShutdown();
+    }
+}
+
+void MqttConsoleClient::gracefulShutdown()
+{
+    if (m_shuttingDown) {
+        return;
+    }
+    m_shuttingDown = true;
+
+    m_signalWatchTimer->stop();
+    m_reconnectTimer->stop();
+    m_heartbeatTimer->stop();
+
+    // Stop input worker thread cleanly without terminate()
     m_inputWorker->stop();
-    m_inputWorker->terminate();
-    m_inputWorker->wait(1000);
 
     if (m_client->state() == QMqttClient::Connected) {
         publishOnlineStatus(false);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
         m_client->disconnectFromHost();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
     }
+
+    m_inputWorker->wait(500);
+    QCoreApplication::quit();
 }
 
 void MqttConsoleClient::start()
@@ -105,7 +187,7 @@ void MqttConsoleClient::start()
     std::cout << "  or JSON: {\"cmd\":\"get_status\"}, {\"cmd\":\"set_heartbeat\",\"interval\":5}" << std::endl;
     std::cout << "------------------------------------------------------" << std::endl;
     std::cout << "Type any message and press Enter to publish to Pub Topic." << std::endl;
-    std::cout << "Type :help for a list of local console commands." << std::endl;
+    std::cout << "Type :help for local commands, or press Ctrl+C to exit." << std::endl;
     std::cout << "======================================================" << std::endl << std::endl;
 
     // Start background input listener
@@ -117,7 +199,9 @@ void MqttConsoleClient::start()
 
 void MqttConsoleClient::tryConnect()
 {
-    if (m_client->state() == QMqttClient::Connected || m_client->state() == QMqttClient::Connecting) {
+    if (m_shuttingDown ||
+        m_client->state() == QMqttClient::Connected ||
+        m_client->state() == QMqttClient::Connecting) {
         return;
     }
 
@@ -172,13 +256,18 @@ void MqttConsoleClient::onMqttConnected()
 
 void MqttConsoleClient::onMqttDisconnected()
 {
-    log(QStringLiteral("DISCONNECTED"), QStringLiteral("Lost connection to broker. Will retry in 5s..."));
     m_subscriptions.clear();
 
     if (m_heartbeatTimer->isActive()) {
         m_heartbeatTimer->stop();
     }
 
+    if (m_shuttingDown) {
+        log(QStringLiteral("DISCONNECTED"), QStringLiteral("Disconnected cleanly from broker."));
+        return;
+    }
+
+    log(QStringLiteral("DISCONNECTED"), QStringLiteral("Lost connection to broker. Will retry in 5s..."));
     if (!m_reconnectTimer->isActive()) {
         m_reconnectTimer->start();
     }
@@ -588,11 +677,7 @@ void MqttConsoleClient::onConsoleInput(const QString &rawLine)
             tryConnect();
         } else if (cmd == QStringLiteral(":quit") || cmd == QStringLiteral(":q")) {
             log(QStringLiteral("INFO"), QStringLiteral("Publishing offline status and exiting..."));
-            if (m_client->state() == QMqttClient::Connected) {
-                publishOnlineStatus(false);
-                m_client->disconnectFromHost();
-            }
-            QCoreApplication::quit();
+            gracefulShutdown();
         } else {
             log(QStringLiteral("WARN"), QString("Unknown command: %1. Type :help for commands.").arg(cmd));
         }

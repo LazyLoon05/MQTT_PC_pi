@@ -10,6 +10,7 @@
 #include <QTimer>
 #include <QMap>
 #include <atomic>
+#include <csignal>
 
 class ConsoleInputWorker : public QThread
 {
@@ -58,6 +59,9 @@ public:
     ~MqttConsoleClient() override;
 
     void start();
+    void gracefulShutdown();
+
+    static void handlePosixSignal(int sig);
 
 public slots:
     void onMqttConnected();
@@ -72,6 +76,7 @@ public slots:
 
     void onConsoleInput(const QString &line);
     void onHeartbeatTimeout();
+    void checkSignalFlag();
     void tryConnect();
 
 private:
@@ -97,7 +102,11 @@ private:
     ConsoleInputWorker *m_inputWorker;
     QTimer *m_heartbeatTimer;
     QTimer *m_reconnectTimer;
+    QTimer *m_signalWatchTimer;
     QElapsedTimer m_appUptimeTimer;
+    bool m_shuttingDown;
+
+    static volatile std::sig_atomic_t s_stopSignalReceived;
 };
 
 #endif // MQTTCONSOLECLIENT_H

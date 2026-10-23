@@ -1,12 +1,17 @@
 #include <QCoreApplication>
 #include <QCommandLineParser>
+#include <csignal>
 #include "mqttconsoleclient.h"
 
 int main(int argc, char *argv[])
 {
     QCoreApplication a(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("Mqtt_cons"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("1.1.0"));
+    QCoreApplication::setApplicationVersion(QStringLiteral("1.2.0"));
+
+    // Register OS signal handlers for graceful shutdown (Ctrl+C / kill / systemd stop)
+    std::signal(SIGINT, MqttConsoleClient::handlePosixSignal);
+    std::signal(SIGTERM, MqttConsoleClient::handlePosixSignal);
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Qt MQTT Console Client for Orange Pi / Linux"));
