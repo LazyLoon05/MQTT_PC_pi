@@ -45,6 +45,15 @@ public:
         int heartbeatInterval = 0; // seconds, 0 = disabled
     };
 
+    struct SystemMetrics {
+        double cpuTempC = 0.0;
+        qint64 ramUsedMB = 0;
+        qint64 ramTotalMB = 0;
+        double ramUsagePercent = 0.0;
+        QString loadAvg = QStringLiteral("N/A");
+        qint64 sysUptimeSec = 0;
+    };
+
     explicit MqttConsoleClient(const Config &config, QObject *parent = nullptr);
     ~MqttConsoleClient() override;
 
@@ -72,6 +81,12 @@ private:
     void unsubscribeTopic(const QString &topic);
     void publishOnlineStatus(bool online);
     void sendPingProbe();
+
+    SystemMetrics readSystemMetrics() const;
+    QString buildTelemetryJson(const QString &eventType = QStringLiteral("telemetry")) const;
+    void processIncomingCommand(const QString &payload);
+    void setHeartbeatInterval(int seconds);
+
     void log(const QString &tag, const QString &message);
 
     Config m_config;
@@ -82,7 +97,7 @@ private:
     ConsoleInputWorker *m_inputWorker;
     QTimer *m_heartbeatTimer;
     QTimer *m_reconnectTimer;
-    qint64 m_uptimeSeconds;
+    QElapsedTimer m_appUptimeTimer;
 };
 
 #endif // MQTTCONSOLECLIENT_H

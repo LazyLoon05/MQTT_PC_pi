@@ -2,8 +2,13 @@
 
 #include <iostream>
 #include <string>
+#include <cmath>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTextStream>
 
 ConsoleInputWorker::ConsoleInputWorker(QObject *parent)
@@ -36,8 +41,9 @@ MqttConsoleClient::MqttConsoleClient(const Config &config, QObject *parent)
     , m_inputWorker(new ConsoleInputWorker(this))
     , m_heartbeatTimer(new QTimer(this))
     , m_reconnectTimer(new QTimer(this))
-    , m_uptimeSeconds(0)
 {
+    m_appUptimeTimer.start();
+
     // Connect MQTT signals
     connect(m_client, &QMqttClient::connected, this, &MqttConsoleClient::onMqttConnected);
     connect(m_client, &QMqttClient::disconnected, this, &MqttConsoleClient::onMqttDisconnected);
@@ -59,9 +65,9 @@ MqttConsoleClient::MqttConsoleClient(const Config &config, QObject *parent)
     connect(m_reconnectTimer, &QTimer::timeout, this, &MqttConsoleClient::tryConnect);
 
     // Heartbeat timer configuration
+    connect(m_heartbeatTimer, &QTimer::timeout, this, &MqttConsoleClient::onHeartbeatTimeout);
     if (m_config.heartbeatInterval > 0) {
         m_heartbeatTimer->setInterval(m_config.heartbeatInterval * 1000);
-        connect(m_heartbeatTimer, &QTimer::timeout, this, &MqttConsoleClient::onHeartbeatTimeout);
     }
 }
 
@@ -94,8 +100,12 @@ void MqttConsoleClient::start()
         std::cout << "Heartbeat    : Every " << m_config.heartbeatInterval << "s" << std::endl;
     }
     std::cout << "------------------------------------------------------" << std::endl;
+    std::cout << "Remote PC Commands supported on [" << m_config.subTopic.toStdString() << "]:" << std::endl;
+    std::cout << "  temp | ram | sysinfo | status | ping | heartbeat <sec>" << std::endl;
+    std::cout << "  or JSON: {\"cmd\":\"get_status\"}, {\"cmd\":\"set_heartbeat\",\"interval\":5}" << std::endl;
+    std::cout << "------------------------------------------------------" << std::endl;
     std::cout << "Type any message and press Enter to publish to Pub Topic." << std::endl;
-    std::cout << "Type :help for a list of console commands." << std::endl;
+    std::cout << "Type :help for a list of local console commands." << std::endl;
     std::cout << "======================================================" << std::endl << std::endl;
 
     // Start background input listener
@@ -156,7 +166,7 @@ void MqttConsoleClient::onMqttConnected()
 
     // Start heartbeat timer if configured
     if (m_config.heartbeatInterval > 0 && !m_heartbeatTimer->isActive()) {
-        m_heartbeatTimer->start();
+        m_heartbeatTimer->start(m_config.heartbeatInterval * 1000);
     }
 }
 
@@ -229,7 +239,221 @@ void MqttConsoleClient::onMqttErrorChanged(QMqttClient::ClientError error)
 
 void MqttConsoleClient::onMqttMessageReceived(const QByteArray &message, const QMqttTopicName &topic)
 {
-    log(QStringLiteral("RECV"), QString("[%1]: %2").arg(topic.name(), QString::fromUtf8(message)));
+    QString payload = QString::fromUtf8(message).trimmed();
+    log(QStringLiteral("RECV"), QString("[%1]: %2").arg(topic.name(), payload));
+
+    // Process remote commands received on Sub Topic
+    if (topic.name() == m_config.subTopic) {
+        processIncomingCommand(payload);
+    }
+}
+
+void MqttConsoleClient::processIncomingCommand(const QString &payload)
+{
+    if (payload.isEmpty()) {
+        return;
+    }
+
+    QString cmd;
+    int intervalArg = -1;
+
+    // 1. Check if payload is JSON command
+    if (payload.startsWith(QLatin1Char('{')) && payload.endsWith(QLatin1Char('}'))) {
+        QJsonParseError parseError;
+        QJsonDocument doc = QJsonDocument::fromJson(payload.toUtf8(), &parseError);
+        if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+            QJsonObject obj = doc.object();
+            cmd = obj.value(QStringLiteral("cmd")).toString().trimmed().toLower();
+            if (cmd.isEmpty()) {
+                cmd = obj.value(QStringLiteral("action")).toString().trimmed().toLower();
+            }
+            if (obj.contains(QStringLiteral("interval"))) {
+                intervalArg = obj.value(QStringLiteral("interval")).toInt(-1);
+            }
+        }
+    } else {
+        // 2. Check plain text command
+        QStringList parts = payload.split(QLatin1Char(' '), QString::SkipEmptyParts);
+        QString firstWord = parts.value(0).toLower();
+        if (firstWord == QStringLiteral("ping") ||
+            firstWord == QStringLiteral("temp") ||
+            firstWord == QStringLiteral("get_temp") ||
+            firstWord == QStringLiteral("ram") ||
+            firstWord == QStringLiteral("get_ram") ||
+            firstWord == QStringLiteral("status") ||
+            firstWord == QStringLiteral("get_status") ||
+            firstWord == QStringLiteral("sysinfo") ||
+            firstWord == QStringLiteral("get_sysinfo") ||
+            firstWord == QStringLiteral("help")) {
+            cmd = firstWord;
+        } else if ((firstWord == QStringLiteral("heartbeat") || firstWord == QStringLiteral("set_heartbeat")) && parts.size() >= 2) {
+            cmd = QStringLiteral("set_heartbeat");
+            intervalArg = parts.value(1).toInt();
+        }
+    }
+
+    if (cmd.isEmpty()) {
+        // Normal chat/data message, no command action needed
+        return;
+    }
+
+    log(QStringLiteral("CMD"), QString("Executing remote command: '%1'").arg(cmd));
+    QString timeStr = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
+
+    if (cmd == QStringLiteral("ping")) {
+        QJsonObject reply;
+        reply[QStringLiteral("device")] = m_config.clientId;
+        reply[QStringLiteral("event")] = QStringLiteral("cmd_reply");
+        reply[QStringLiteral("cmd")] = QStringLiteral("ping");
+        reply[QStringLiteral("reply")] = QStringLiteral("pong");
+        reply[QStringLiteral("timestamp")] = timeStr;
+        publishMessage(m_config.pubTopic, QString::fromUtf8(QJsonDocument(reply).toJson(QJsonDocument::Compact)));
+    } else if (cmd == QStringLiteral("temp") || cmd == QStringLiteral("get_temp")) {
+        SystemMetrics m = readSystemMetrics();
+        QJsonObject reply;
+        reply[QStringLiteral("device")] = m_config.clientId;
+        reply[QStringLiteral("event")] = QStringLiteral("cmd_reply");
+        reply[QStringLiteral("cmd")] = QStringLiteral("get_temp");
+        reply[QStringLiteral("cpu_temp_c")] = std::round(m.cpuTempC * 10.0) / 10.0;
+        reply[QStringLiteral("timestamp")] = timeStr;
+        publishMessage(m_config.pubTopic, QString::fromUtf8(QJsonDocument(reply).toJson(QJsonDocument::Compact)));
+    } else if (cmd == QStringLiteral("ram") || cmd == QStringLiteral("get_ram")) {
+        SystemMetrics m = readSystemMetrics();
+        QJsonObject reply;
+        reply[QStringLiteral("device")] = m_config.clientId;
+        reply[QStringLiteral("event")] = QStringLiteral("cmd_reply");
+        reply[QStringLiteral("cmd")] = QStringLiteral("get_ram");
+        reply[QStringLiteral("ram_used_mb")] = m.ramUsedMB;
+        reply[QStringLiteral("ram_total_mb")] = m.ramTotalMB;
+        reply[QStringLiteral("ram_usage_pct")] = std::round(m.ramUsagePercent * 10.0) / 10.0;
+        reply[QStringLiteral("timestamp")] = timeStr;
+        publishMessage(m_config.pubTopic, QString::fromUtf8(QJsonDocument(reply).toJson(QJsonDocument::Compact)));
+    } else if (cmd == QStringLiteral("status") || cmd == QStringLiteral("get_status") ||
+               cmd == QStringLiteral("sysinfo") || cmd == QStringLiteral("get_sysinfo")) {
+        publishMessage(m_config.pubTopic, buildTelemetryJson(QStringLiteral("cmd_reply")));
+    } else if (cmd == QStringLiteral("set_heartbeat")) {
+        if (intervalArg >= 0) {
+            setHeartbeatInterval(intervalArg);
+            QJsonObject reply;
+            reply[QStringLiteral("device")] = m_config.clientId;
+            reply[QStringLiteral("event")] = QStringLiteral("cmd_reply");
+            reply[QStringLiteral("cmd")] = QStringLiteral("set_heartbeat");
+            reply[QStringLiteral("heartbeat_interval_s")] = m_config.heartbeatInterval;
+            reply[QStringLiteral("timestamp")] = timeStr;
+            publishMessage(m_config.pubTopic, QString::fromUtf8(QJsonDocument(reply).toJson(QJsonDocument::Compact)));
+        }
+    } else if (cmd == QStringLiteral("help")) {
+        QJsonObject reply;
+        reply[QStringLiteral("device")] = m_config.clientId;
+        reply[QStringLiteral("event")] = QStringLiteral("cmd_reply");
+        reply[QStringLiteral("available_commands")] = QJsonArray::fromStringList(
+            {QStringLiteral("ping"), QStringLiteral("temp"), QStringLiteral("ram"),
+             QStringLiteral("sysinfo"), QStringLiteral("status"), QStringLiteral("heartbeat <sec>")});
+        publishMessage(m_config.pubTopic, QString::fromUtf8(QJsonDocument(reply).toJson(QJsonDocument::Compact)));
+    }
+}
+
+MqttConsoleClient::SystemMetrics MqttConsoleClient::readSystemMetrics() const
+{
+    SystemMetrics metrics;
+
+    // 1. Read CPU Temperature (/sys/class/thermal/thermal_zone0/temp)
+    QFile tempFile(QStringLiteral("/sys/class/thermal/thermal_zone0/temp"));
+    if (tempFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QByteArray data = tempFile.readAll().trimmed();
+        bool ok = false;
+        double val = data.toDouble(&ok);
+        if (ok) {
+            metrics.cpuTempC = (val > 200.0) ? (val / 1000.0) : val;
+        }
+        tempFile.close();
+    }
+
+    // 2. Read Memory Info (/proc/meminfo)
+    QFile memFile(QStringLiteral("/proc/meminfo"));
+    if (memFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qint64 memTotalKB = 0;
+        qint64 memAvailKB = 0;
+        const QList<QByteArray> lines = memFile.readAll().split('\n');
+        for (const QByteArray &line : lines) {
+            if (line.startsWith("MemTotal:")) {
+                QStringList parts = QString::fromLatin1(line).split(QLatin1Char(' '), QString::SkipEmptyParts);
+                if (parts.size() >= 2) {
+                    memTotalKB = parts.at(1).toLongLong();
+                }
+            } else if (line.startsWith("MemAvailable:")) {
+                QStringList parts = QString::fromLatin1(line).split(QLatin1Char(' '), QString::SkipEmptyParts);
+                if (parts.size() >= 2) {
+                    memAvailKB = parts.at(1).toLongLong();
+                }
+            }
+        }
+        if (memTotalKB > 0) {
+            qint64 usedKB = memTotalKB - memAvailKB;
+            metrics.ramTotalMB = memTotalKB / 1024;
+            metrics.ramUsedMB = usedKB / 1024;
+            metrics.ramUsagePercent = (static_cast<double>(usedKB) * 100.0) / static_cast<double>(memTotalKB);
+        }
+        memFile.close();
+    }
+
+    // 3. Read Load Average (/proc/loadavg)
+    QFile loadFile(QStringLiteral("/proc/loadavg"));
+    if (loadFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QString content = QString::fromLatin1(loadFile.readAll().trimmed());
+        QStringList parts = content.split(QLatin1Char(' '), QString::SkipEmptyParts);
+        if (parts.size() >= 3) {
+            metrics.loadAvg = QString("%1 %2 %3").arg(parts.at(0), parts.at(1), parts.at(2));
+        }
+        loadFile.close();
+    }
+
+    // 4. Read System Uptime (/proc/uptime)
+    QFile upFile(QStringLiteral("/proc/uptime"));
+    if (upFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QString content = QString::fromLatin1(upFile.readAll().trimmed());
+        QStringList parts = content.split(QLatin1Char(' '), QString::SkipEmptyParts);
+        if (!parts.isEmpty()) {
+            metrics.sysUptimeSec = static_cast<qint64>(parts.at(0).toDouble());
+        }
+        upFile.close();
+    }
+
+    return metrics;
+}
+
+QString MqttConsoleClient::buildTelemetryJson(const QString &eventType) const
+{
+    SystemMetrics m = readSystemMetrics();
+    QJsonObject obj;
+    obj[QStringLiteral("device")] = m_config.clientId;
+    obj[QStringLiteral("event")] = eventType;
+    obj[QStringLiteral("status")] = QStringLiteral("online");
+    obj[QStringLiteral("cpu_temp_c")] = std::round(m.cpuTempC * 10.0) / 10.0;
+    obj[QStringLiteral("ram_used_mb")] = m.ramUsedMB;
+    obj[QStringLiteral("ram_total_mb")] = m.ramTotalMB;
+    obj[QStringLiteral("ram_usage_pct")] = std::round(m.ramUsagePercent * 10.0) / 10.0;
+    obj[QStringLiteral("load_avg")] = m.loadAvg;
+    obj[QStringLiteral("sys_uptime_s")] = m.sysUptimeSec;
+    obj[QStringLiteral("app_uptime_s")] = m_appUptimeTimer.elapsed() / 1000;
+    obj[QStringLiteral("timestamp")] = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
+
+    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+}
+
+void MqttConsoleClient::setHeartbeatInterval(int seconds)
+{
+    m_config.heartbeatInterval = seconds;
+    if (seconds > 0) {
+        m_heartbeatTimer->setInterval(seconds * 1000);
+        if (m_client->state() == QMqttClient::Connected) {
+            m_heartbeatTimer->start();
+        }
+        log(QStringLiteral("INFO"), QString("Heartbeat telemetry enabled: every %1s").arg(seconds));
+    } else {
+        m_heartbeatTimer->stop();
+        log(QStringLiteral("INFO"), QStringLiteral("Heartbeat telemetry disabled."));
+    }
 }
 
 void MqttConsoleClient::onMqttPingResponseReceived()
@@ -286,6 +510,24 @@ void MqttConsoleClient::onConsoleInput(const QString &rawLine)
             printHelp();
         } else if (cmd == QStringLiteral(":ping")) {
             sendPingProbe();
+        } else if (cmd == QStringLiteral(":sysinfo") || cmd == QStringLiteral(":hw")) {
+            SystemMetrics m = readSystemMetrics();
+            std::cout << "\n--- Orange Pi Hardware Telemetry ---" << std::endl;
+            std::cout << "CPU Temp     : " << (std::round(m.cpuTempC * 10.0) / 10.0) << " C" << std::endl;
+            std::cout << "RAM Usage    : " << m.ramUsedMB << " MB / " << m.ramTotalMB << " MB ("
+                      << (std::round(m.ramUsagePercent * 10.0) / 10.0) << "%)" << std::endl;
+            std::cout << "Load Average : " << m.loadAvg.toStdString() << std::endl;
+            std::cout << "Sys Uptime   : " << m.sysUptimeSec << " s" << std::endl;
+            std::cout << "------------------------------------\n" << std::endl;
+            if (m_client->state() == QMqttClient::Connected) {
+                publishMessage(m_config.pubTopic, buildTelemetryJson(QStringLiteral("manual_telemetry")));
+            }
+        } else if (cmd == QStringLiteral(":heartbeat")) {
+            if (parts.size() >= 2) {
+                setHeartbeatInterval(parts.value(1).toInt());
+            } else {
+                log(QStringLiteral("INFO"), QString("Current heartbeat interval: %1s (Usage: :heartbeat <seconds>)").arg(m_config.heartbeatInterval));
+            }
         } else if (cmd == QStringLiteral(":pubtopic") || cmd == QStringLiteral(":topic")) {
             if (parts.size() >= 2) {
                 QString newTopic = parts.value(1).trimmed();
@@ -336,6 +578,7 @@ void MqttConsoleClient::onConsoleInput(const QString &rawLine)
             std::cout << "Sub Topic    : " << m_config.subTopic.toStdString() << std::endl;
             std::cout << "Pub Topic    : " << m_config.pubTopic.toStdString() << std::endl;
             std::cout << "Status Topic : " << m_config.statusTopic.toStdString() << " (LWT)" << std::endl;
+            std::cout << "Heartbeat    : " << m_config.heartbeatInterval << " s" << std::endl;
             std::cout << "Active Subs  : " << m_subscriptions.keys().join(QStringLiteral(", ")).toStdString() << std::endl;
             std::cout << "-----------------------------\n" << std::endl;
         } else if (cmd == QStringLiteral(":reconnect")) {
@@ -364,11 +607,7 @@ void MqttConsoleClient::onHeartbeatTimeout()
     if (m_client->state() != QMqttClient::Connected) {
         return;
     }
-    m_uptimeSeconds += m_config.heartbeatInterval;
-    QString payload = QString("{\"device\":\"%1\",\"status\":\"online\",\"uptime_s\":%2}")
-                          .arg(m_config.clientId)
-                          .arg(m_uptimeSeconds);
-    publishMessage(m_config.pubTopic, payload, 0, false);
+    publishMessage(m_config.pubTopic, buildTelemetryJson(QStringLiteral("heartbeat")), 0, false);
 }
 
 void MqttConsoleClient::publishOnlineStatus(bool online)
@@ -381,7 +620,7 @@ void MqttConsoleClient::publishOnlineStatus(bool online)
                           .arg(m_config.clientId, statusStr);
     m_client->publish(QMqttTopicName(m_config.statusTopic), payload.toUtf8(), 1, true);
     log(QStringLiteral("LWT/STATUS"),
-        QString("Published [%1] (Retain) -> %2").arg( m_config.statusTopic, payload));
+        QString("Published [%1] (Retain) -> %2").arg(m_config.statusTopic, payload));
 }
 
 void MqttConsoleClient::publishMessage(const QString &topic, const QString &message, quint8 qos, bool retain)
@@ -429,8 +668,10 @@ void MqttConsoleClient::unsubscribeTopic(const QString &topic)
 
 void MqttConsoleClient::printHelp()
 {
-    std::cout << "\n--- Console Commands ---" << std::endl;
+    std::cout << "\n--- Local Console Commands ---" << std::endl;
     std::cout << "  <message>              : Publish message to default Pub Topic (" << m_config.pubTopic.toStdString() << ")" << std::endl;
+    std::cout << "  :sysinfo (or :hw)      : Read & publish Orange Pi CPU Temp, RAM, Load, Uptime" << std::endl;
+    std::cout << "  :heartbeat <seconds>   : Set auto-telemetry interval (0 to disable)" << std::endl;
     std::cout << "  :pub <topic> <message> : Publish message to a specific topic" << std::endl;
     std::cout << "  :sub <topic>           : Subscribe to an additional topic" << std::endl;
     std::cout << "  :unsub <topic>         : Unsubscribe from a topic" << std::endl;
@@ -440,7 +681,7 @@ void MqttConsoleClient::printHelp()
     std::cout << "  :status                : Show connection status, topics, and active subs" << std::endl;
     std::cout << "  :reconnect             : Force reconnect to broker" << std::endl;
     std::cout << "  :quit (or :q)          : Publish offline status and exit" << std::endl;
-    std::cout << "------------------------\n" << std::endl;
+    std::cout << "------------------------------\n" << std::endl;
 }
 
 void MqttConsoleClient::log(const QString &tag, const QString &message)
