@@ -47,6 +47,8 @@ build/
 */debug/
 */release/
 */build/
+received_files/
+*/received_files/
 .moc/
 .obj/
 .pch/

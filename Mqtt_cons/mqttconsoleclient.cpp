@@ -4,9 +4,12 @@
 #include <string>
 #include <cmath>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
+#include <QDir>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -89,6 +92,7 @@ MqttConsoleClient::MqttConsoleClient(const Config &config, QObject *parent)
     , m_heartbeatTimer(new QTimer(this))
     , m_reconnectTimer(new QTimer(this))
     , m_signalWatchTimer(new QTimer(this))
+    , m_fileChunkTimer(new QTimer(this))
     , m_shuttingDown(false)
 {
     m_appUptimeTimer.start();
@@ -118,6 +122,10 @@ MqttConsoleClient::MqttConsoleClient(const Config &config, QObject *parent)
     if (m_config.heartbeatInterval > 0) {
         m_heartbeatTimer->setInterval(m_config.heartbeatInterval * 1000);
     }
+
+    // File transfer chunk timer (10ms per 32KB chunk)
+    m_fileChunkTimer->setInterval(10);
+    connect(m_fileChunkTimer, &QTimer::timeout, this, &MqttConsoleClient::onSendNextFileChunk);
 
     // Signal watcher timer (checks SIGINT / SIGTERM every 200ms)
     m_signalWatchTimer->setInterval(200);
@@ -150,6 +158,7 @@ void MqttConsoleClient::gracefulShutdown()
     m_signalWatchTimer->stop();
     m_reconnectTimer->stop();
     m_heartbeatTimer->stop();
+    m_fileChunkTimer->stop();
 
     // Stop input worker thread cleanly without terminate()
     m_inputWorker->stop();
@@ -175,6 +184,7 @@ void MqttConsoleClient::start()
     std::cout << "Sub Topic    : " << m_config.subTopic.toStdString() << " (Listen from PC)" << std::endl;
     std::cout << "Pub Topic    : " << m_config.pubTopic.toStdString() << " (Send to PC)" << std::endl;
     std::cout << "Status Topic : " << m_config.statusTopic.toStdString() << " (LWT Online/Offline)" << std::endl;
+    std::cout << "Recv Folder  : " << receivedFilesDir().toStdString() << std::endl;
     if (!m_config.username.isEmpty()) {
         std::cout << "Username     : " << m_config.username.toStdString() << std::endl;
     }
@@ -183,8 +193,9 @@ void MqttConsoleClient::start()
     }
     std::cout << "------------------------------------------------------" << std::endl;
     std::cout << "Remote PC Commands supported on [" << m_config.subTopic.toStdString() << "]:" << std::endl;
-    std::cout << "  temp | ram | sysinfo | status | ping | heartbeat <sec>" << std::endl;
-    std::cout << "  or JSON: {\"cmd\":\"get_status\"}, {\"cmd\":\"set_heartbeat\",\"interval\":5}" << std::endl;
+    std::cout << "  temp | ram | sysinfo | status | ping | heartbeat <sec> | getfile <path>" << std::endl;
+    std::cout << "Local File Transfer command:" << std::endl;
+    std::cout << "  :sendfile <file_path>  (Send any file from Orange Pi to PC)" << std::endl;
     std::cout << "------------------------------------------------------" << std::endl;
     std::cout << "Type any message and press Enter to publish to Pub Topic." << std::endl;
     std::cout << "Type :help for local commands, or press Ctrl+C to exit." << std::endl;
@@ -257,6 +268,9 @@ void MqttConsoleClient::onMqttConnected()
 void MqttConsoleClient::onMqttDisconnected()
 {
     m_subscriptions.clear();
+    m_fileChunkTimer->stop();
+    m_outFile.active = false;
+    m_inFile.active = false;
 
     if (m_heartbeatTimer->isActive()) {
         m_heartbeatTimer->stop();
@@ -328,13 +342,265 @@ void MqttConsoleClient::onMqttErrorChanged(QMqttClient::ClientError error)
 
 void MqttConsoleClient::onMqttMessageReceived(const QByteArray &message, const QMqttTopicName &topic)
 {
+    // 1. Intercept chunked file transfer packets first
+    if (tryHandleFileTransferMessage(message, topic.name())) {
+        return;
+    }
+
     QString payload = QString::fromUtf8(message).trimmed();
     log(QStringLiteral("RECV"), QString("[%1]: %2").arg(topic.name(), payload));
 
-    // Process remote commands received on Sub Topic
+    // 2. Process remote commands received on Sub Topic
     if (topic.name() == m_config.subTopic) {
         processIncomingCommand(payload);
     }
+}
+
+bool MqttConsoleClient::startFileSend(const QString &filePath, const QString &targetTopic)
+{
+    if (m_client->state() != QMqttClient::Connected) {
+        log(QStringLiteral("WARN"), QStringLiteral("Cannot send file: Not connected to Broker!"));
+        return false;
+    }
+    if (m_outFile.active) {
+        log(QStringLiteral("WARN"), QStringLiteral("Another file transfer is already in progress."));
+        return false;
+    }
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        log(QStringLiteral("FILE ERR"),
+            QString("Cannot open file '%1': %2").arg(filePath, file.errorString()));
+        return false;
+    }
+
+    QFileInfo fileInfo(file);
+    if (fileInfo.size() > 50 * 1024 * 1024) {
+        log(QStringLiteral("FILE ERR"), QStringLiteral("File exceeds 50 MB limit."));
+        file.close();
+        return false;
+    }
+
+    m_outFile.data = file.readAll();
+    file.close();
+
+    m_outFile.active = true;
+    m_outFile.transferId = QString::number(QDateTime::currentMSecsSinceEpoch());
+    m_outFile.fileName = fileInfo.fileName();
+    m_outFile.targetTopic = targetTopic;
+    m_outFile.sha256Hex = QString::fromLatin1(
+        QCryptographicHash::hash(m_outFile.data, QCryptographicHash::Sha256).toHex());
+    m_outFile.totalChunks = m_outFile.data.isEmpty()
+                                ? 0
+                                : ((m_outFile.data.size() + m_outFile.chunkSize - 1) / m_outFile.chunkSize);
+    m_outFile.currentChunk = 0;
+    m_outFile.lastLoggedMilestone = 0;
+
+    QJsonObject startObj;
+    startObj[QStringLiteral("mqtt_type")] = QStringLiteral("file_transfer");
+    startObj[QStringLiteral("stage")] = QStringLiteral("start");
+    startObj[QStringLiteral("transfer_id")] = m_outFile.transferId;
+    startObj[QStringLiteral("filename")] = m_outFile.fileName;
+    startObj[QStringLiteral("total_size")] = m_outFile.data.size();
+    startObj[QStringLiteral("total_chunks")] = m_outFile.totalChunks;
+    startObj[QStringLiteral("sha256")] = m_outFile.sha256Hex;
+
+    QByteArray payload = QJsonDocument(startObj).toJson(QJsonDocument::Compact);
+    m_client->publish(QMqttTopicName(m_outFile.targetTopic), payload, 1, false);
+
+    log(QStringLiteral("FILE SEND"),
+        QString("Uploading '%1' (%2 bytes, %3 chunks) -> [%4]...")
+            .arg(m_outFile.fileName)
+            .arg(m_outFile.data.size())
+            .arg(m_outFile.totalChunks)
+            .arg(m_outFile.targetTopic));
+
+    m_fileChunkTimer->start();
+    return true;
+}
+
+void MqttConsoleClient::onSendNextFileChunk()
+{
+    if (!m_outFile.active || m_client->state() != QMqttClient::Connected) {
+        m_fileChunkTimer->stop();
+        m_outFile.active = false;
+        m_outFile.data.clear();
+        return;
+    }
+
+    if (m_outFile.currentChunk < m_outFile.totalChunks) {
+        int offset = m_outFile.currentChunk * m_outFile.chunkSize;
+        QByteArray chunkBytes = m_outFile.data.mid(offset, m_outFile.chunkSize);
+
+        QJsonObject chunkObj;
+        chunkObj[QStringLiteral("mqtt_type")] = QStringLiteral("file_transfer");
+        chunkObj[QStringLiteral("stage")] = QStringLiteral("chunk");
+        chunkObj[QStringLiteral("transfer_id")] = m_outFile.transferId;
+        chunkObj[QStringLiteral("index")] = m_outFile.currentChunk;
+        chunkObj[QStringLiteral("data")] = QString::fromLatin1(chunkBytes.toBase64());
+
+        QByteArray payload = QJsonDocument(chunkObj).toJson(QJsonDocument::Compact);
+        m_client->publish(QMqttTopicName(m_outFile.targetTopic), payload, 1, false);
+
+        m_outFile.currentChunk++;
+        int progress = (m_outFile.currentChunk * 100) / qMax(1, m_outFile.totalChunks);
+        if (progress >= m_outFile.lastLoggedMilestone + 25 && progress < 100) {
+            m_outFile.lastLoggedMilestone = (progress / 25) * 25;
+            log(QStringLiteral("FILE SEND"),
+                QString("Progress '%1': %2% (%3/%4 chunks)")
+                    .arg(m_outFile.fileName)
+                    .arg(progress)
+                    .arg(m_outFile.currentChunk)
+                    .arg(m_outFile.totalChunks));
+        }
+        return;
+    }
+
+    m_fileChunkTimer->stop();
+
+    QJsonObject endObj;
+    endObj[QStringLiteral("mqtt_type")] = QStringLiteral("file_transfer");
+    endObj[QStringLiteral("stage")] = QStringLiteral("end");
+    endObj[QStringLiteral("transfer_id")] = m_outFile.transferId;
+    endObj[QStringLiteral("filename")] = m_outFile.fileName;
+    endObj[QStringLiteral("sha256")] = m_outFile.sha256Hex;
+
+    QByteArray payload = QJsonDocument(endObj).toJson(QJsonDocument::Compact);
+    m_client->publish(QMqttTopicName(m_outFile.targetTopic), payload, 1, false);
+
+    log(QStringLiteral("FILE SEND"),
+        QString("Completed '%1' (100%, %2 bytes, SHA-256: %3...)")
+            .arg(m_outFile.fileName)
+            .arg(m_outFile.data.size())
+            .arg(m_outFile.sha256Hex.left(12)));
+
+    m_outFile.active = false;
+    m_outFile.data.clear();
+}
+
+bool MqttConsoleClient::tryHandleFileTransferMessage(const QByteArray &message, const QString &topic)
+{
+    if (!message.startsWith('{')) {
+        return false;
+    }
+
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(message, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        return false;
+    }
+
+    QJsonObject obj = doc.object();
+    if (obj.value(QStringLiteral("mqtt_type")).toString() != QStringLiteral("file_transfer")) {
+        return false;
+    }
+
+    QString stage = obj.value(QStringLiteral("stage")).toString();
+    QString transferId = obj.value(QStringLiteral("transfer_id")).toString();
+
+    if (stage == QStringLiteral("start")) {
+        m_inFile.active = true;
+        m_inFile.transferId = transferId;
+        m_inFile.fileName = QFileInfo(obj.value(QStringLiteral("filename")).toString()).fileName();
+        if (m_inFile.fileName.isEmpty()) {
+            m_inFile.fileName = QStringLiteral("received_file.bin");
+        }
+        m_inFile.totalSize = static_cast<qint64>(obj.value(QStringLiteral("total_size")).toDouble());
+        m_inFile.totalChunks = obj.value(QStringLiteral("total_chunks")).toInt();
+        m_inFile.receivedChunks = 0;
+        m_inFile.lastLoggedMilestone = 0;
+        m_inFile.expectedSha256 = obj.value(QStringLiteral("sha256")).toString();
+        m_inFile.buffer.clear();
+        if (m_inFile.totalSize > 0 && m_inFile.totalSize <= 50 * 1024 * 1024) {
+            m_inFile.buffer.reserve(static_cast<int>(m_inFile.totalSize));
+        }
+
+        log(QStringLiteral("FILE RECV"),
+            QString("Receiving '%1' (%2 bytes, %3 chunks) from [%4]...")
+                .arg(m_inFile.fileName)
+                .arg(m_inFile.totalSize)
+                .arg(m_inFile.totalChunks)
+                .arg(topic));
+        return true;
+    }
+
+    if (stage == QStringLiteral("chunk")) {
+        if (!m_inFile.active || m_inFile.transferId != transferId) {
+            return true;
+        }
+        QByteArray chunkData = QByteArray::fromBase64(obj.value(QStringLiteral("data")).toString().toLatin1());
+        m_inFile.buffer.append(chunkData);
+        m_inFile.receivedChunks++;
+
+        int progress = (m_inFile.receivedChunks * 100) / qMax(1, m_inFile.totalChunks);
+        if (progress >= m_inFile.lastLoggedMilestone + 25 && progress < 100) {
+            m_inFile.lastLoggedMilestone = (progress / 25) * 25;
+            log(QStringLiteral("FILE RECV"),
+                QString("Progress '%1': %2% (%3/%4 chunks)")
+                    .arg(m_inFile.fileName)
+                    .arg(progress)
+                    .arg(m_inFile.receivedChunks)
+                    .arg(m_inFile.totalChunks));
+        }
+        return true;
+    }
+
+    if (stage == QStringLiteral("end")) {
+        if (!m_inFile.active || m_inFile.transferId != transferId) {
+            return true;
+        }
+
+        QString actualSha256 = QString::fromLatin1(
+            QCryptographicHash::hash(m_inFile.buffer, QCryptographicHash::Sha256).toHex());
+        bool hashOk = m_inFile.expectedSha256.isEmpty() ||
+                      (actualSha256.compare(m_inFile.expectedSha256, Qt::CaseInsensitive) == 0);
+
+        QString savePath = receivedFilesDir() + QLatin1Char('/') + m_inFile.fileName;
+        QFile outFile(savePath);
+        if (outFile.open(QIODevice::WriteOnly)) {
+            outFile.write(m_inFile.buffer);
+            outFile.close();
+
+            QString verifyStr = hashOk ? QStringLiteral("SHA-256 Verified OK")
+                                       : QStringLiteral("SHA-256 MISMATCH!");
+            log(QStringLiteral("FILE SAVED"),
+                QString("'%1' (%2 bytes, %3) -> %4")
+                    .arg(m_inFile.fileName)
+                    .arg(m_inFile.buffer.size())
+                    .arg(verifyStr, savePath));
+
+            // Send acknowledgement back to PC on pubTopic
+            QJsonObject ack;
+            ack[QStringLiteral("device")] = m_config.clientId;
+            ack[QStringLiteral("event")] = QStringLiteral("file_ack");
+            ack[QStringLiteral("filename")] = m_inFile.fileName;
+            ack[QStringLiteral("size_bytes")] = m_inFile.buffer.size();
+            ack[QStringLiteral("sha256_verified")] = hashOk;
+            ack[QStringLiteral("saved_to")] = savePath;
+            ack[QStringLiteral("timestamp")] = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
+            publishMessage(m_config.pubTopic, QString::fromUtf8(QJsonDocument(ack).toJson(QJsonDocument::Compact)), 1, false);
+        } else {
+            log(QStringLiteral("FILE ERR"),
+                QString("Failed to save '%1' to %2: %3")
+                    .arg(m_inFile.fileName, savePath, outFile.errorString()));
+        }
+
+        m_inFile.active = false;
+        m_inFile.buffer.clear();
+        return true;
+    }
+
+    return true;
+}
+
+QString MqttConsoleClient::receivedFilesDir() const
+{
+    QString dirPath = QCoreApplication::applicationDirPath() + QStringLiteral("/received_files");
+    QDir dir(dirPath);
+    if (!dir.exists()) {
+        dir.mkpath(QStringLiteral("."));
+    }
+    return dir.absolutePath();
 }
 
 void MqttConsoleClient::processIncomingCommand(const QString &payload)
@@ -345,6 +611,7 @@ void MqttConsoleClient::processIncomingCommand(const QString &payload)
 
     QString cmd;
     int intervalArg = -1;
+    QString filePathArg;
 
     // 1. Check if payload is JSON command
     if (payload.startsWith(QLatin1Char('{')) && payload.endsWith(QLatin1Char('}'))) {
@@ -358,6 +625,11 @@ void MqttConsoleClient::processIncomingCommand(const QString &payload)
             }
             if (obj.contains(QStringLiteral("interval"))) {
                 intervalArg = obj.value(QStringLiteral("interval")).toInt(-1);
+            }
+            if (obj.contains(QStringLiteral("path"))) {
+                filePathArg = obj.value(QStringLiteral("path")).toString().trimmed();
+            } else if (obj.contains(QStringLiteral("file"))) {
+                filePathArg = obj.value(QStringLiteral("file")).toString().trimmed();
             }
         }
     } else {
@@ -378,6 +650,10 @@ void MqttConsoleClient::processIncomingCommand(const QString &payload)
         } else if ((firstWord == QStringLiteral("heartbeat") || firstWord == QStringLiteral("set_heartbeat")) && parts.size() >= 2) {
             cmd = QStringLiteral("set_heartbeat");
             intervalArg = parts.value(1).toInt();
+        } else if ((firstWord == QStringLiteral("getfile") || firstWord == QStringLiteral("get_file") ||
+                    firstWord == QStringLiteral("sendfile")) && parts.size() >= 2) {
+            cmd = QStringLiteral("get_file");
+            filePathArg = payload.section(QLatin1Char(' '), 1).trimmed();
         }
     }
 
@@ -431,13 +707,25 @@ void MqttConsoleClient::processIncomingCommand(const QString &payload)
             reply[QStringLiteral("timestamp")] = timeStr;
             publishMessage(m_config.pubTopic, QString::fromUtf8(QJsonDocument(reply).toJson(QJsonDocument::Compact)));
         }
+    } else if (cmd == QStringLiteral("get_file") || cmd == QStringLiteral("getfile")) {
+        if (!startFileSend(filePathArg, m_config.pubTopic)) {
+            QJsonObject reply;
+            reply[QStringLiteral("device")] = m_config.clientId;
+            reply[QStringLiteral("event")] = QStringLiteral("cmd_reply");
+            reply[QStringLiteral("cmd")] = QStringLiteral("get_file");
+            reply[QStringLiteral("status")] = QStringLiteral("error");
+            reply[QStringLiteral("error")] = QString("Failed to open or send file: %1").arg(filePathArg);
+            reply[QStringLiteral("timestamp")] = timeStr;
+            publishMessage(m_config.pubTopic, QString::fromUtf8(QJsonDocument(reply).toJson(QJsonDocument::Compact)));
+        }
     } else if (cmd == QStringLiteral("help")) {
         QJsonObject reply;
         reply[QStringLiteral("device")] = m_config.clientId;
         reply[QStringLiteral("event")] = QStringLiteral("cmd_reply");
         reply[QStringLiteral("available_commands")] = QJsonArray::fromStringList(
             {QStringLiteral("ping"), QStringLiteral("temp"), QStringLiteral("ram"),
-             QStringLiteral("sysinfo"), QStringLiteral("status"), QStringLiteral("heartbeat <sec>")});
+             QStringLiteral("sysinfo"), QStringLiteral("status"),
+             QStringLiteral("heartbeat <sec>"), QStringLiteral("getfile <path>")});
         publishMessage(m_config.pubTopic, QString::fromUtf8(QJsonDocument(reply).toJson(QJsonDocument::Compact)));
     }
 }
@@ -599,6 +887,13 @@ void MqttConsoleClient::onConsoleInput(const QString &rawLine)
             printHelp();
         } else if (cmd == QStringLiteral(":ping")) {
             sendPingProbe();
+        } else if (cmd == QStringLiteral(":sendfile") || cmd == QStringLiteral(":send")) {
+            if (parts.size() >= 2) {
+                QString filePath = line.section(QLatin1Char(' '), 1).trimmed();
+                startFileSend(filePath, m_config.pubTopic);
+            } else {
+                log(QStringLiteral("WARN"), QStringLiteral("Usage: :sendfile <file_path>"));
+            }
         } else if (cmd == QStringLiteral(":sysinfo") || cmd == QStringLiteral(":hw")) {
             SystemMetrics m = readSystemMetrics();
             std::cout << "\n--- Orange Pi Hardware Telemetry ---" << std::endl;
@@ -667,6 +962,7 @@ void MqttConsoleClient::onConsoleInput(const QString &rawLine)
             std::cout << "Sub Topic    : " << m_config.subTopic.toStdString() << std::endl;
             std::cout << "Pub Topic    : " << m_config.pubTopic.toStdString() << std::endl;
             std::cout << "Status Topic : " << m_config.statusTopic.toStdString() << " (LWT)" << std::endl;
+            std::cout << "Recv Folder  : " << receivedFilesDir().toStdString() << std::endl;
             std::cout << "Heartbeat    : " << m_config.heartbeatInterval << " s" << std::endl;
             std::cout << "Active Subs  : " << m_subscriptions.keys().join(QStringLiteral(", ")).toStdString() << std::endl;
             std::cout << "-----------------------------\n" << std::endl;
@@ -755,6 +1051,7 @@ void MqttConsoleClient::printHelp()
 {
     std::cout << "\n--- Local Console Commands ---" << std::endl;
     std::cout << "  <message>              : Publish message to default Pub Topic (" << m_config.pubTopic.toStdString() << ")" << std::endl;
+    std::cout << "  :sendfile <file_path>  : Send any file (text/binary/image) to PC" << std::endl;
     std::cout << "  :sysinfo (or :hw)      : Read & publish Orange Pi CPU Temp, RAM, Load, Uptime" << std::endl;
     std::cout << "  :heartbeat <seconds>   : Set auto-telemetry interval (0 to disable)" << std::endl;
     std::cout << "  :pub <topic> <message> : Publish message to a specific topic" << std::endl;

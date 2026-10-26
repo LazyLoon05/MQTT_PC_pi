@@ -42,6 +42,10 @@ Hệ thống giao tiếp MQTT hai chiều hoàn chỉnh giữa máy tính **PC (
 - **Tùy chọn nâng cao QoS & Retain**:
   - Chọn mức **QoS (0, 1, 2)** riêng cho cả chiều Subscribe và Publish.
   - Checkbox **Retain** để lưu giữ bản tin quan trọng trên Broker.
+- **Truyền File 2 chiều có kiểm tra toàn vẹn (Chunked File Transfer + SHA-256)**:
+  - Nút **`Send File...`** cho phép chọn bất kỳ file nào (văn bản, hình ảnh, nhị phân, script, nén...) tối đa 50 MB để gửi xuống Orange Pi.
+  - Tự động chia nhỏ file thành từng mảnh `32 KB` (Base64 chunking), hiển thị tiến độ thời gian thực trên thanh **`FileProgressBar` (`0% -> 100%`)** mà không làm đơ giao diện.
+  - Khi nhận file từ Orange Pi, tự động kiểm tra mã băm **`SHA-256`**, lưu vào thư mục `received_files/` và có nút **`Open Recv Folder`** để mở nhanh thư mục chứa file.
 - **Tách riêng 2 khung hiển thị**:
   - **Recv Data (Incoming MQTT Messages)**: Chỉ hiển thị dữ liệu thực tế nhận từ các topic kèm nút `Clear Recv`.
   - **System Log (Status & Diagnostics)**: Hiển thị nhật ký kết nối, trạng thái, lỗi mạng và kết quả đo Ping kèm nút `Clear Log`.
@@ -71,9 +75,14 @@ Hệ thống giao tiếp MQTT hai chiều hoàn chỉnh giữa máy tính **PC (
     - `sysinfo` (hoặc `status`): Trả về toàn bộ thông số phần cứng của Orange Pi.
     - `ping`: Phản hồi gói JSON `pong`.
     - `heartbeat <giây>`: Bật/tắt hoặc đổi chu kỳ tự động gửi thông số phần cứng từ xa (ví dụ `heartbeat 5` hoặc `heartbeat 0`).
-    - Hỗ trợ cả lệnh JSON: `{"cmd":"get_status"}` hoặc `{"cmd":"set_heartbeat","interval":5}`.
+    - `getfile <đường_dẫn_file>`: Yêu cầu Orange Pi gửi một file bất kỳ về PC (ví dụ: `getfile Mqtt_cons.pro` hoặc `getfile /etc/hostname`).
+    - Hỗ trợ cả lệnh JSON: `{"cmd":"get_status"}`, `{"cmd":"set_heartbeat","interval":5}`, `{"cmd":"get_file","path":"..."}`.
+- **Truyền & Nhận File 2 chiều trên Orange Pi**:
+  - Khi PC gửi file xuống, Orange Pi tự động ghép các mảnh, đối chiếu mã băm `SHA-256`, lưu vào `./received_files/<tên_file>` và gửi gói xác nhận `file_ack` về PC.
+  - Từ Terminal của Orange Pi, gõ `:sendfile <đường_dẫn_file>` để chủ động bắn bất kỳ file nào lên PC.
 - **Các lệnh điều khiển trực tiếp tại Terminal của Orange Pi**:
   - `<tin_nhắn>` : Gửi tin nhắn trực tiếp lên Pub Topic (`orangepi/data`).
+  - `:sendfile <đường_dẫn>` (hoặc `:send <đường_dẫn>`) : Gửi file từ Orange Pi lên PC.
   - `:sysinfo` (hoặc `:hw`) : Xem thông số phần cứng tại chỗ và đẩy gói JSON lên PC.
   - `:heartbeat <giây>` : Đặt chu kỳ tự động báo cáo thông số phần cứng (0 để tắt).
   - `:ping` : Đo độ trễ TCP (ms) tới Broker.

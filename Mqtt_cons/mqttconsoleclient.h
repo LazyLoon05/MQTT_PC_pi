@@ -76,16 +76,46 @@ public slots:
 
     void onConsoleInput(const QString &line);
     void onHeartbeatTimeout();
+    void onSendNextFileChunk();
     void checkSignalFlag();
     void tryConnect();
 
 private:
+    struct OutgoingFileState {
+        bool active = false;
+        QString transferId;
+        QString fileName;
+        QString targetTopic;
+        QByteArray data;
+        QString sha256Hex;
+        int totalChunks = 0;
+        int currentChunk = 0;
+        int lastLoggedMilestone = 0;
+        int chunkSize = 32768; // 32 KB per chunk
+    };
+
+    struct IncomingFileState {
+        bool active = false;
+        QString transferId;
+        QString fileName;
+        qint64 totalSize = 0;
+        int totalChunks = 0;
+        int receivedChunks = 0;
+        int lastLoggedMilestone = 0;
+        QString expectedSha256;
+        QByteArray buffer;
+    };
+
     void printHelp();
     void publishMessage(const QString &topic, const QString &message, quint8 qos = 0, bool retain = false);
     void subscribeTopic(const QString &topic, quint8 qos = 0);
     void unsubscribeTopic(const QString &topic);
     void publishOnlineStatus(bool online);
     void sendPingProbe();
+
+    bool startFileSend(const QString &filePath, const QString &targetTopic);
+    bool tryHandleFileTransferMessage(const QByteArray &message, const QString &topic);
+    QString receivedFilesDir() const;
 
     SystemMetrics readSystemMetrics() const;
     QString buildTelemetryJson(const QString &eventType = QStringLiteral("telemetry")) const;
@@ -103,7 +133,10 @@ private:
     QTimer *m_heartbeatTimer;
     QTimer *m_reconnectTimer;
     QTimer *m_signalWatchTimer;
+    QTimer *m_fileChunkTimer;
     QElapsedTimer m_appUptimeTimer;
+    OutgoingFileState m_outFile;
+    IncomingFileState m_inFile;
     bool m_shuttingDown;
 
     static volatile std::sig_atomic_t s_stopSignalReceived;
